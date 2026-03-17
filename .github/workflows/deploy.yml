@@ -27,30 +27,8 @@ jobs:
       - name: List build output
         run: ls -la build/libs/
 
-      - name: Upload jar via scp
-        env:
-          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_HOST}" "echo connection ok"
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no build/libs/Inquisition-*.jar "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/"
-
-      - name: Restart container
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          port: 22
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /root/docker/inquisition/app
-            cp -f Inquisition.jar "Inquisition.jar.bak.$(date +%Y%m%d_%H%M%S)"
-            mv -f Inquisition-*.jar Inquisition.jar
-            docker stop inquisition
-            rm -f /root/docker/inquisition/data.json
-            docker start inquisition
+          name: inquisition-jar
+          path: build/libs/Inquisition-*.jar

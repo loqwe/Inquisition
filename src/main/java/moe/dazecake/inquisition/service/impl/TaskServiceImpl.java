@@ -91,7 +91,7 @@ public class TaskServiceImpl implements TaskService {
                 account = accountMapper.selectById(iterator.next());
 
                 //删除检查
-                if (account.getDelete() == 1 || account.getExpireTime().isAfter(LocalDateTime.now())) {
+                if (account.getDelete() == 1 || account.getExpireTime().isBefore(LocalDateTime.now())) {
                     dynamicInfo.getUserSanInfoMap().remove(account.getId());
                     dynamicInfo.getFreezeUserInfoMap().remove(account.getId());
                     iterator.remove();
