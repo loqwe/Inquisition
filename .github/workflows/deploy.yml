@@ -28,12 +28,16 @@ jobs:
         run: ls -la build/libs/
 
       - name: Upload jar via scp
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no build/libs/Inquisition-*.jar ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/root/docker/inquisition/app/
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no build/libs/Inquisition-*.jar "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/"
 
       - name: Restart container
         uses: appleboy/ssh-action@v1.0.3
