@@ -34,9 +34,10 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_HOST}" "echo connection ok"
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no build/libs/Inquisition-*.jar "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/"
 
       - name: Restart container
