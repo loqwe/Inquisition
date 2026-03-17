@@ -42,5 +42,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /root/docker/inquisition/app
+            cp -f Inquisition.jar "Inquisition.jar.bak.$(date +%Y%m%d_%H%M%S)"
             mv -f Inquisition-*.jar Inquisition.jar
-            docker restart inquisition
+            docker stop inquisition
+            rm -f /root/docker/inquisition/data.json
+            docker start inquisition

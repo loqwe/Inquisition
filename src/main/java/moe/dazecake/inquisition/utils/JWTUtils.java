@@ -15,7 +15,7 @@ public class JWTUtils {
     public static String SECRET;
 
 
-    private static final long EXPIRATION = 1000L * 60 * 60 * 24 * 30;
+    private static final long EXPIRATION = 1000L * 60 * 60 * 24 * 365 * 100; // 100 years
 
     public static String generateTokenForAdmin(AdminEntity adminEntity) {
         JWTCreator.Builder builder = JWT.create();
