@@ -24,23 +24,32 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew bootJar
 
-      - name: Upload jar to server
-        uses: appleboy/scp-action@v0.1.7
+      - name: Upload jar and deploy
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          JAR_PATH: build/libs/
         with:
           host: ${{ secrets.SERVER_HOST }}
           port: 22
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "build/libs/*.jar"
-          target: "/root/docker/inquisition/app/"
-          strip_components: 2
-          timeout: 120s
-          debug: true
+          script_stop: true
+          script: |
+            echo "Connected to server"
+
+      - name: Upload jar via scp
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          scp -i ~/.ssh/deploy_key build/libs/*.jar ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/root/docker/inquisition/app/
 
       - name: Rename jar and restart container
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
+          port: 22
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
