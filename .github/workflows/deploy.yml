@@ -8,6 +8,8 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -24,11 +26,12 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew bootJar
 
-      - name: List build output
-        run: ls -la build/libs/
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: inquisition-jar
-          path: build/libs/Inquisition-*.jar
+      - name: Create Release and upload jar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="deploy-$(date +%Y%m%d-%H%M%S)"
+          JAR_FILE=$(ls build/libs/Inquisition-*.jar)
+          JAR_SIZE=$(stat -c%s "$JAR_FILE")
+          echo "Creating release $TAG with jar ($JAR_SIZE bytes)"
+          gh release create "$TAG" "$JAR_FILE" --title "Deploy $TAG" --notes "Auto deploy from CI"
