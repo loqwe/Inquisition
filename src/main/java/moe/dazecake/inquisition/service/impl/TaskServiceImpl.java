@@ -12,6 +12,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.local.UserSan;
 import moe.dazecake.inquisition.service.intf.TaskService;
+import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.Result;
 import moe.dazecake.inquisition.utils.TimeUtil;
@@ -99,11 +100,11 @@ public class TaskServiceImpl implements TaskService {
                 }
 
                 //作用域检查
-                if (!device.getWorkScope().contains(account.getTaskType())) {
+                if (!DeviceScopeUtil.supports(device, account.getTaskType())) {
                     continue;
                 } else {
                     //B服日常任务不分配至特殊任务设备
-                    if (account.getServer() == 1 && account.getTaskType().equals("daily") && !device.getWorkScope().contains("b_daily")) {
+                    if (account.getServer() == 1 && account.getTaskType().equals("daily") && !DeviceScopeUtil.supports(device, "b_daily")) {
                         continue;
                     }
                 }

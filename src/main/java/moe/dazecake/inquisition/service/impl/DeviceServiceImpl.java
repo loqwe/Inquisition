@@ -15,6 +15,7 @@ import moe.dazecake.inquisition.model.vo.device.LoadDevice;
 import moe.dazecake.inquisition.model.vo.device.LoadDeviceVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.DeviceService;
+import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.stereotype.Service;
@@ -132,9 +133,11 @@ public class DeviceServiceImpl implements DeviceService {
     public Result<Boolean> isScopeDeviceFree(TaskType type) {
         var deviceList = deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
                 .eq(DeviceEntity::getDelete, 0)
-                .like(DeviceEntity::getWorkScope, type.getType())
         );
         for (DeviceEntity device : deviceList) {
+            if (!DeviceScopeUtil.supports(device, type.getType())) {
+                continue;
+            }
             if (dynamicInfo.getDeviceStatusMap().get(device.getDeviceToken()) == 1) {
                 return Result.success(true, "存在空闲设备");
             }
