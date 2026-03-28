@@ -116,7 +116,7 @@ public class RunScript implements ApplicationRunner {
                     .eq(AccountEntity::getFreeze, 0)
                     .eq(AccountEntity::getTaskType, "daily")
                     .ge(AccountEntity::getExpireTime, LocalDateTime.now())
-            ));
+            );
             for (AccountEntity account : dailyAccounts) {
                 dynamicInfo.setUserSanZero(account.getId());
                 dynamicInfo.getWaitUserList().add(account.getId());
