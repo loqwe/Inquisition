@@ -55,7 +55,7 @@ public interface AccountService {
      * @author DazeCake
      * @date 2023/1/25 23:34
      */
-    PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size);
+    PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size, String taskType, String freeze, String expired, String deleted);
 
     /**
      * 通过关键词查询账号

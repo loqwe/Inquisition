@@ -102,9 +102,28 @@ public class AccountServiceImpl implements AccountService {
     }
 
     @Override
-    public PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size) {
-        var data = accountMapper.selectPage(new Page<>(current, size),
-                Wrappers.<AccountEntity>lambdaQuery().eq(AccountEntity::getDelete, 0));
+    public PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size, String taskType, String freeze, String expired, String deleted) {
+        var wrapper = Wrappers.<AccountEntity>lambdaQuery();
+        var deletedFilter = parseBooleanFilter(deleted);
+
+        wrapper.eq(AccountEntity::getDelete, Boolean.TRUE.equals(deletedFilter) ? 1 : 0);
+
+        if (taskType != null && !taskType.isBlank() && !"all".equalsIgnoreCase(taskType)) {
+            wrapper.eq(AccountEntity::getTaskType, taskType);
+        }
+
+        var freezeFilter = parseBooleanFilter(freeze);
+        if (freezeFilter != null) {
+            wrapper.eq(AccountEntity::getFreeze, freezeFilter ? 1 : 0);
+        }
+
+        var expiredFilter = parseBooleanFilter(expired);
+        if (expiredFilter != null) {
+            wrapper.lt(expiredFilter, AccountEntity::getExpireTime, LocalDateTime.now())
+                    .ge(!expiredFilter, AccountEntity::getExpireTime, LocalDateTime.now());
+        }
+
+        var data = accountMapper.selectPage(new Page<>(current, size), wrapper);
         return getAccountWithSanVOPageQueryVO(data);
     }
 
@@ -123,6 +142,19 @@ public class AccountServiceImpl implements AccountService {
         }
 
         return getAccountWithSanVOPageQueryVO(data);
+    }
+
+    private Boolean parseBooleanFilter(String value) {
+        if (value == null || value.isBlank() || "all".equalsIgnoreCase(value)) {
+            return null;
+        }
+        if ("true".equalsIgnoreCase(value) || "1".equals(value)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(value) || "0".equals(value)) {
+            return false;
+        }
+        return null;
     }
 
     @Override
