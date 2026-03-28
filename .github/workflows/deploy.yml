@@ -42,15 +42,16 @@ jobs:
           chmod 600 "$SSH_KEY_PATH"
           ssh-keyscan -H "$SERVER_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
 
-          scp -i "$SSH_KEY_PATH" \
+          ssh -T -i "$SSH_KEY_PATH" \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=no \
             -o ConnectTimeout=10 \
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=6 \
-            "$JAR_FILE" "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/Inquisition-upload.jar"
+            -o IPQoS=throughput \
+            "${SERVER_USER}@${SERVER_HOST}" "cat > /root/docker/inquisition/app/Inquisition-upload.jar" < "$JAR_FILE"
 
-          ssh -i "$SSH_KEY_PATH" \
+          ssh -T -i "$SSH_KEY_PATH" \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=no \
             -o ConnectTimeout=10 \
