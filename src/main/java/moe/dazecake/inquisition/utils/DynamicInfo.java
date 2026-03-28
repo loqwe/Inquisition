@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 
 @Slf4j
 @Component
@@ -59,18 +60,16 @@ public class DynamicInfo extends MemoryInfo {
     //获取所有等待队列详细信息
     public ArrayList<AccountEntity> getAllWaitUserInfo() {
         if (this.waitUserList.size() != 0) {
-            var waitTasks = new ArrayList<>(accountMapper.selectBatchIds(waitUserList));
-            waitUserList.forEach(
-                    it -> {
-                        for (AccountEntity waitTask : waitTasks) {
-                            if (it.equals(waitTask.getId())) {
-                                waitTasks.add(waitTask);
-                                break;
-                            }
-                        }
-                    }
-            );
-            return waitTasks;
+            var taskMap = new HashMap<Long, AccountEntity>();
+            accountMapper.selectBatchIds(waitUserList).forEach(task -> taskMap.put(task.getId(), task));
+            var orderedTasks = new ArrayList<AccountEntity>();
+            waitUserList.forEach(taskId -> {
+                var waitTask = taskMap.get(taskId);
+                if (waitTask != null) {
+                    orderedTasks.add(waitTask);
+                }
+            });
+            return orderedTasks;
         } else {
             return new ArrayList<>();
         }
