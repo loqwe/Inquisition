@@ -111,13 +111,15 @@ public class RunScript implements ApplicationRunner {
                     }
                 }
             }
-            for (AccountEntity account : accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
+            var dailyAccounts = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                     .eq(AccountEntity::getDelete, 0)
                     .eq(AccountEntity::getFreeze, 0)
                     .eq(AccountEntity::getTaskType, "daily")
                     .ge(AccountEntity::getExpireTime, LocalDateTime.now())
-            )) {
+            ));
+            for (AccountEntity account : dailyAccounts) {
                 dynamicInfo.setUserSanZero(account.getId());
+                dynamicInfo.getWaitUserList().add(account.getId());
             }
 
         }

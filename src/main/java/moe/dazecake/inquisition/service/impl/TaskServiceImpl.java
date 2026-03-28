@@ -257,12 +257,17 @@ public class TaskServiceImpl implements TaskService {
     public Result<String> tempInsertTask(Long id) {
         Result<String> result = new Result<>();
 
-        dynamicInfo.getWaitUserList().forEach(account -> {
-            if (account.equals(id)) {
-                dynamicInfo.getWaitUserList().remove(account);
-                dynamicInfo.getWaitUserList().add(0, account);
+        synchronized (dynamicInfo.getWaitUserList()) {
+            var iterator = dynamicInfo.getWaitUserList().iterator();
+            while (iterator.hasNext()) {
+                var account = iterator.next();
+                if (account.equals(id)) {
+                    iterator.remove();
+                    dynamicInfo.getWaitUserList().add(0, account);
+                    break;
+                }
             }
-        });
+        }
 
         return result.setCode(200)
                 .setMsg("插队成功")
@@ -592,18 +597,23 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public void forceHaltTask(Long id) {
         synchronized (dynamicInfo.getWaitUserList()) {
-            for (Long waiter : dynamicInfo.getWaitUserList()) {
+            var waitIterator = dynamicInfo.getWaitUserList().iterator();
+            while (waitIterator.hasNext()) {
+                var waiter = waitIterator.next();
                 if (waiter.equals(id)) {
-                    dynamicInfo.getWaitUserList().remove(waiter);
+                    waitIterator.remove();
                     break;
                 }
             }
         }
         synchronized (dynamicInfo.getWorkUserList()) {
-            for (Long worker : dynamicInfo.getWorkUserList()) {
+            var workIterator = dynamicInfo.getWorkUserList().iterator();
+            while (workIterator.hasNext()) {
+                var worker = workIterator.next();
                 if (worker.equals(id)) {
                     var waitHaltDevice = dynamicInfo.getWorkUserInfoMap().get(worker).getDeviceToken();
-                    dynamicInfo.removeWorkUser(worker);
+                    workIterator.remove();
+                    dynamicInfo.getWorkUserInfoMap().remove(worker);
                     dynamicInfo.getHaltList().add(waitHaltDevice);
                     break;
                 }

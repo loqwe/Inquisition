@@ -64,6 +64,5 @@ jobs:
             cp -f Inquisition.jar Inquisition.jar.bak.\$(date +%Y%m%d_%H%M%S)
             mv -f Inquisition-new.jar Inquisition.jar
             docker stop inquisition && docker rm inquisition
-            rm -f /root/docker/inquisition/data.json
             docker run -d --name inquisition --restart always -p 2000:2000 -v /root/docker/inquisition:/config -v /root/docker/inquisition/app/Inquisition.jar:/Inquisition.jar dazecake/inquisition:v1.2.8
           "

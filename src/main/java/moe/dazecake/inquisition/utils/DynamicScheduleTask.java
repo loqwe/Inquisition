@@ -149,6 +149,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                         //log.info("任务超时检测");
                         LocalDateTime nowTime = LocalDateTime.now();
                         int num = 0;
+                        var timeoutUsers = new ArrayList<Long>();
                         synchronized (dynamicInfo.getWorkUserList()) {
                             for (Long worker : dynamicInfo.getWorkUserList()) {
                                 if (!dynamicInfo.getWorkUserInfoMap().containsKey(worker)) {
@@ -157,11 +158,12 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                                 if (dynamicInfo.getWorkUserExpireTime(worker).isBefore(nowTime)) {
                                     //记录日志
                                     logService.logWarn("任务超时", "");
-                                    taskService.forceHaltTask(worker);
+                                    timeoutUsers.add(worker);
                                     num++;
                                 }
                             }
                         }
+                        timeoutUsers.forEach(taskService::forceHaltTask);
                         if (num > 0) {
                             log.info("【审判庭】 已处理超时任务数: " + num);
                         }
