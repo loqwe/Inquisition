@@ -36,40 +36,80 @@ jobs:
           JAR_FILE=$(ls build/libs/Inquisition-*.jar)
           JAR_SIZE=$(stat -c%s "$JAR_FILE")
           SSH_KEY_PATH="$HOME/.ssh/deploy_key"
+          PART_PREFIX="Inquisition-upload.part-"
 
           mkdir -p "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" > "$SSH_KEY_PATH"
           chmod 600 "$SSH_KEY_PATH"
           ssh-keyscan -H "$SERVER_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
 
-          ssh -T -i "$SSH_KEY_PATH" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=10 \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=6 \
-            -o IPQoS=throughput \
-            "${SERVER_USER}@${SERVER_HOST}" "cat > /root/docker/inquisition/app/Inquisition-upload.jar" < "$JAR_FILE"
+          SSH_OPTS=(
+            -T
+            -i "$SSH_KEY_PATH"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=no
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=6
+            -o IPQoS=throughput
+          )
 
-          ssh -T -i "$SSH_KEY_PATH" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=10 \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=6 \
-            "${SERVER_USER}@${SERVER_HOST}" "
-              set -euo pipefail
-              cd /root/docker/inquisition/app
-              REMOTE_SIZE=\$(stat -c%s Inquisition-upload.jar)
-              echo \"Uploaded: \$REMOTE_SIZE bytes, expected: ${JAR_SIZE} bytes\"
-              if [ \"\$REMOTE_SIZE\" -ne \"${JAR_SIZE}\" ]; then
-                echo 'ERROR: Upload size mismatch, aborting'
-                rm -f Inquisition-upload.jar
-                exit 1
+          ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
+            set -euo pipefail
+            pkill -f '/root/docker/inquisition/app/Inquisition-upload.jar' || true
+            rm -f /root/docker/inquisition/app/Inquisition-upload.jar /root/docker/inquisition/app/${PART_PREFIX}*
+          "
+
+          rm -f ${PART_PREFIX}*
+          split -b 8m -d -a 3 "$JAR_FILE" "$PART_PREFIX"
+
+          for part in ${PART_PREFIX}*; do
+            PART_NAME=$(basename "$part")
+            PART_SIZE=$(stat -c%s "$part")
+            UPLOADED=0
+
+            for attempt in 1 2 3; do
+              rm -f "$part.failed" 2>/dev/null || true
+              timeout 300 ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" \
+                "cat > /root/docker/inquisition/app/${PART_NAME}" < "$part" || true
+
+              REMOTE_PART_SIZE=$(ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" \
+                "stat -c%s /root/docker/inquisition/app/${PART_NAME} 2>/dev/null || echo 0")
+
+              echo "${PART_NAME}: local=${PART_SIZE}, remote=${REMOTE_PART_SIZE}, attempt=${attempt}"
+              if [ "$REMOTE_PART_SIZE" -eq "$PART_SIZE" ]; then
+                UPLOADED=1
+                break
               fi
-              unzip -tqq Inquisition-upload.jar
-              cp -f Inquisition.jar Inquisition.jar.bak.\$(date +%Y%m%d_%H%M%S)
-              mv -f Inquisition-upload.jar Inquisition.jar
-              docker stop inquisition && docker rm inquisition
-              docker run -d --name inquisition --restart always -p 2000:2000 -v /root/docker/inquisition:/config -v /root/docker/inquisition/app/Inquisition.jar:/Inquisition.jar dazecake/inquisition:v1.2.8
-            "
+
+              ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" \
+                "rm -f /root/docker/inquisition/app/${PART_NAME}"
+              sleep 2
+            done
+
+            if [ "$UPLOADED" -ne 1 ]; then
+              echo "ERROR: Failed to upload ${PART_NAME}"
+              exit 1
+            fi
+          done
+
+          rm -f ${PART_PREFIX}*
+
+          ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
+            set -euo pipefail
+            cd /root/docker/inquisition/app
+            cat ${PART_PREFIX}* > Inquisition-upload.jar
+            rm -f ${PART_PREFIX}*
+            REMOTE_SIZE=\$(stat -c%s Inquisition-upload.jar)
+            echo \"Uploaded: \$REMOTE_SIZE bytes, expected: ${JAR_SIZE} bytes\"
+            if [ \"\$REMOTE_SIZE\" -ne \"${JAR_SIZE}\" ]; then
+              echo 'ERROR: Upload size mismatch, aborting'
+              rm -f Inquisition-upload.jar
+              exit 1
+            fi
+            unzip -tqq Inquisition-upload.jar
+            cp -f Inquisition.jar Inquisition.jar.bak.\$(date +%Y%m%d_%H%M%S)
+            mv -f Inquisition-upload.jar Inquisition.jar
+            docker stop inquisition && docker rm inquisition
+            docker run -d --name inquisition --restart always -p 2000:2000 -v /root/docker/inquisition:/config -v /root/docker/inquisition/app/Inquisition.jar:/Inquisition.jar dazecake/inquisition:v1.2.8
+          "
