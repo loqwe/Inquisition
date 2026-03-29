@@ -1,9 +1,14 @@
 package moe.dazecake.inquisition.service.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.google.gson.Gson;
 import com.zjiecode.wxpusher.client.bean.Message;
 import lombok.extern.slf4j.Slf4j;
 import moe.dazecake.inquisition.mapper.AccountMapper;
+import moe.dazecake.inquisition.mapper.AdminMapper;
+import moe.dazecake.inquisition.model.dto.admin.AdminNoticeConfigDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.service.intf.MessageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -13,6 +18,7 @@ import javax.annotation.Resource;
 @Slf4j
 @Service
 public class MessageServiceImpl implements MessageService {
+    private final Gson gson = new Gson();
 
     @Value("${spring.mail.enable:false}")
     boolean enableMail;
@@ -31,6 +37,12 @@ public class MessageServiceImpl implements MessageService {
 
     @Resource
     AccountMapper accountMapper;
+
+    @Resource
+    AdminMapper adminMapper;
+
+    @Resource
+    PushPlusServiceImpl pushPlusService;
 
     @Override
     public void push(AccountEntity account, String title, String content) {
@@ -64,8 +76,33 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void pushAdmin(String title, String content) {
-        if (enableMail) {
+        if (enableMail && adminMail != null && !adminMail.isBlank()) {
             emailService.sendSimpleMail(adminMail, title, content);
+        }
+        var markdown = "# " + title + "\n\n" + content.replace("\n", "\n\n");
+        adminMapper.selectList(Wrappers.<AdminEntity>lambdaQuery().eq(AdminEntity::getDelete, 0)).forEach(admin -> {
+            var config = parseAdminNoticeConfig(admin.getNotice());
+            if (enableWxPusher && config.getWxPusherEnable() && !config.getWxPusherUid().isBlank()) {
+                wxPusherService.push(Message.CONTENT_TYPE_MD, markdown, config.getWxPusherUid(), null);
+            }
+            if (config.getPushPlusEnable() && !config.getPushPlusToken().isBlank()) {
+                pushPlusService.push(config.getPushPlusToken(), title, markdown);
+            }
+        });
+    }
+
+    private AdminNoticeConfigDTO parseAdminNoticeConfig(String notice) {
+        try {
+            if (notice == null || notice.isBlank()) return new AdminNoticeConfigDTO();
+            var config = gson.fromJson(notice, AdminNoticeConfigDTO.class);
+            if (config == null) return new AdminNoticeConfigDTO();
+            config.setWxPusherEnable(Boolean.TRUE.equals(config.getWxPusherEnable()));
+            config.setWxPusherUid(config.getWxPusherUid() == null ? "" : config.getWxPusherUid().trim());
+            config.setPushPlusEnable(Boolean.TRUE.equals(config.getPushPlusEnable()));
+            config.setPushPlusToken(config.getPushPlusToken() == null ? "" : config.getPushPlusToken().trim());
+            return config;
+        } catch (Exception e) {
+            return new AdminNoticeConfigDTO();
         }
     }
 }

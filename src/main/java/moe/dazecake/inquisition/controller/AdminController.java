@@ -4,12 +4,15 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import moe.dazecake.inquisition.annotation.Login;
 import moe.dazecake.inquisition.model.dto.admin.ChangeAdminPasswordDTO;
+import moe.dazecake.inquisition.model.dto.admin.AdminNoticeConfigDTO;
 import moe.dazecake.inquisition.model.dto.admin.LoginAdminDTO;
 import moe.dazecake.inquisition.model.dto.admin.SetServerStatueDTO;
 import moe.dazecake.inquisition.model.vo.admin.AddProUserBalanceDTO;
 import moe.dazecake.inquisition.model.vo.admin.AdminLoginVO;
+import moe.dazecake.inquisition.model.vo.admin.AdminNoticeConfigVO;
 import moe.dazecake.inquisition.service.impl.AdminServiceImpl;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.JWTUtils;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.web.bind.annotation.*;
 
@@ -59,6 +62,21 @@ public class AdminController {
     public Result<String> setServerStatus(@RequestBody SetServerStatueDTO statueDTO) {
         dynamicInfo.setActive(statueDTO.getActive());
         return Result.success("设置成功");
+    }
+
+    @Login
+    @Operation(summary = "获取管理员通知配置")
+    @GetMapping("/getAdminNoticeConfig")
+    public Result<AdminNoticeConfigVO> getAdminNoticeConfig(@RequestHeader("Authorization") String token) {
+        return adminService.getAdminNoticeConfig(JWTUtils.getId(token));
+    }
+
+    @Login
+    @Operation(summary = "设置管理员通知配置")
+    @PostMapping("/setAdminNoticeConfig")
+    public Result<String> setAdminNoticeConfig(@RequestHeader("Authorization") String token,
+                                               @RequestBody AdminNoticeConfigDTO configDTO) {
+        return adminService.updateAdminNoticeConfig(JWTUtils.getId(token), configDTO);
     }
 
 }

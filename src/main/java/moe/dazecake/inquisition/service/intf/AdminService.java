@@ -1,9 +1,11 @@
 package moe.dazecake.inquisition.service.intf;
 
 import moe.dazecake.inquisition.model.dto.admin.ChangeAdminPasswordDTO;
+import moe.dazecake.inquisition.model.dto.admin.AdminNoticeConfigDTO;
 import moe.dazecake.inquisition.model.dto.admin.LoginAdminDTO;
 import moe.dazecake.inquisition.model.vo.admin.AddProUserBalanceDTO;
 import moe.dazecake.inquisition.model.vo.admin.AdminLoginVO;
+import moe.dazecake.inquisition.model.vo.admin.AdminNoticeConfigVO;
 import moe.dazecake.inquisition.utils.Result;
 
 public interface AdminService {
@@ -29,5 +31,9 @@ public interface AdminService {
      * @date 2023/1/26 10:57
      */
     Result<String> addBalanceForProUser(AddProUserBalanceDTO addProUserBalanceDTO);
+
+    Result<AdminNoticeConfigVO> getAdminNoticeConfig(Long adminId);
+
+    Result<String> updateAdminNoticeConfig(Long adminId, AdminNoticeConfigDTO configDTO);
 
 }
