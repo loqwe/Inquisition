@@ -302,6 +302,11 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 },
                 triggerContext -> new CronTrigger("0 0 20 * * ?").nextExecutionTime(triggerContext)
         );
+        //管理员状态汇总
+        taskRegistrar.addTriggerTask(
+                this::sendAdminSummary,
+                triggerContext -> new CronTrigger("0 0 0,8,12,16,18 * * ?").nextExecutionTime(triggerContext)
+        );
         //异常账号检测
         taskRegistrar.addTriggerTask(
                 () -> {
@@ -323,5 +328,68 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 },
                 triggerContext -> new CronTrigger("0 0 4 * * ?").nextExecutionTime(triggerContext)
         );
+    }
+
+    private void sendAdminSummary() {
+        var now = LocalDateTime.now();
+        var offlineDevices = new ArrayList<>(deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
+                .eq(DeviceEntity::getDelete, 0)));
+        offlineDevices.removeIf(device -> dynamicInfo.getDeviceStatusMap().getOrDefault(device.getDeviceToken(), 0) != 0);
+
+        var frozenAccounts = new ArrayList<>(accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
+                .gt(AccountEntity::getExpireTime, now)
+                .eq(AccountEntity::getFreeze, 1)
+                .eq(AccountEntity::getDelete, 0)));
+        var expiringAccounts = new ArrayList<>(accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
+                .lt(AccountEntity::getExpireTime, now.plusDays(7))
+                .gt(AccountEntity::getExpireTime, now)
+                .eq(AccountEntity::getDelete, 0)));
+        var abnormalAccounts = new ArrayList<>(accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
+                .eq(AccountEntity::getFreeze, 0)
+                .eq(AccountEntity::getDelete, 0)
+                .ge(AccountEntity::getExpireTime, now)));
+        abnormalAccounts.removeIf(account -> dynamicInfo.getUserSanInfoMap().containsKey(account.getId()));
+
+        var waitAccounts = dynamicInfo.getAllWaitUserInfo();
+        var waitIdSet = new LinkedHashSet<Long>();
+        waitAccounts.removeIf(account -> !waitIdSet.add(account.getId()));
+
+        var content = new StringBuilder();
+        content.append("时间: ").append(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n\n");
+        appendDeviceSummary(content, "设备离线", offlineDevices);
+        appendAccountSummary(content, "冻结账号", frozenAccounts, false);
+        appendAccountSummary(content, "7天内到期账号", expiringAccounts, true);
+        appendAccountSummary(content, "异常账号", abnormalAccounts, false);
+        appendAccountSummary(content, "待分配队列", waitAccounts, false);
+        messageService.pushAdmin("[审判庭] 管理员状态汇总 " + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), content.toString());
+    }
+
+    private void appendDeviceSummary(StringBuilder content, String title, ArrayList<DeviceEntity> devices) {
+        content.append(title).append("：").append(devices.size()).append(" 台\n");
+        for (int index = 0; index < devices.size() && index < 10; index++) {
+            var device = devices.get(index);
+            content.append("- ").append(device.getDeviceName())
+                    .append(" / token=").append(device.getDeviceToken()).append("\n");
+        }
+        if (devices.size() > 10) {
+            content.append("- ...等 ").append(devices.size()).append(" 台\n");
+        }
+        content.append("\n");
+    }
+
+    private void appendAccountSummary(StringBuilder content, String title, ArrayList<AccountEntity> accounts, boolean showExpireTime) {
+        content.append(title).append("：").append(accounts.size()).append(" 个\n");
+        for (int index = 0; index < accounts.size() && index < 10; index++) {
+            var account = accounts.get(index);
+            content.append("- ").append(account.getName()).append(" / account=").append(account.getAccount());
+            if (showExpireTime) {
+                content.append(" / 到期=").append(account.getExpireTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
+            }
+            content.append("\n");
+        }
+        if (accounts.size() > 10) {
+            content.append("- ...等 ").append(accounts.size()).append(" 个\n");
+        }
+        content.append("\n");
     }
 }
