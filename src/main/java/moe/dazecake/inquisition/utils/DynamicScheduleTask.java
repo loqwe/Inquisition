@@ -76,6 +76,8 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     @Value("${inquisition.chinac.maxPlayerInDevice:25}")
     Integer maxPlayerInDevice;
 
+    private static final long RECENT_OFFLINE_WINDOW_HOURS = 24;
+
     @Override
     public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
         //队列巡检
@@ -358,7 +360,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
         var offlineDevices = new ArrayList<>(deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
                 .eq(DeviceEntity::getDelete, 0)));
-        offlineDevices.removeIf(device -> dynamicInfo.getDeviceStatusMap().getOrDefault(device.getDeviceToken(), 0) != 0);
+        offlineDevices.removeIf(device -> !isRecentlyOfflineDevice(device, now));
 
         var frozenAccounts = new ArrayList<>(accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                 .gt(AccountEntity::getExpireTime, now)
@@ -380,11 +382,11 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
         var content = new StringBuilder();
         content.append("时间: ").append(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n\n");
-        appendDeviceSummary(content, "设备离线", offlineDevices);
-        appendAccountSummary(content, "冻结账号", frozenAccounts, false);
-        appendAccountSummary(content, "7天内到期账号", expiringAccounts, true);
-        appendAccountSummary(content, "异常账号", abnormalAccounts, false);
-        appendAccountSummary(content, "待分配队列", waitAccounts, false);
+        appendDeviceSummary(content, "近期离线设备", offlineDevices);
+        appendAccountSummary(content, "冻结账号", frozenAccounts);
+        appendAccountSummary(content, "7天内到期账号", expiringAccounts);
+        appendAccountSummary(content, "异常账号", abnormalAccounts);
+        appendAccountSummary(content, "待分配队列", waitAccounts);
         messageService.pushAdmin(targetAdmins, "[审判庭] 管理员状态汇总 " + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), content.toString());
     }
 
@@ -392,31 +394,30 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         return AdminNoticeConfigUtils.parse(gson, notice, false, "");
     }
 
-    private void appendDeviceSummary(StringBuilder content, String title, ArrayList<DeviceEntity> devices) {
-        content.append(title).append("：").append(devices.size()).append(" 台\n");
-        for (int index = 0; index < devices.size() && index < 10; index++) {
-            var device = devices.get(index);
-            content.append("- ").append(device.getDeviceName())
-                    .append(" / token=").append(device.getDeviceToken()).append("\n");
+    private boolean isRecentlyOfflineDevice(DeviceEntity device, LocalDateTime now) {
+        if (dynamicInfo.getDeviceStatusMap().getOrDefault(device.getDeviceToken(), 0) != 0) {
+            return false;
         }
-        if (devices.size() > 10) {
-            content.append("- ...等 ").append(devices.size()).append(" 台\n");
-        }
-        content.append("\n");
+        var lastHeartbeatTime = dynamicInfo.getDeviceLastHeartbeatMap().get(device.getDeviceToken());
+        return lastHeartbeatTime != null && !lastHeartbeatTime.isBefore(now.minusHours(RECENT_OFFLINE_WINDOW_HOURS));
     }
 
-    private void appendAccountSummary(StringBuilder content, String title, ArrayList<AccountEntity> accounts, boolean showExpireTime) {
-        content.append(title).append("：").append(accounts.size()).append(" 个\n");
-        for (int index = 0; index < accounts.size() && index < 10; index++) {
-            var account = accounts.get(index);
-            content.append("- ").append(account.getName()).append(" / account=").append(account.getAccount());
-            if (showExpireTime) {
-                content.append(" / 到期=").append(account.getExpireTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
-            }
-            content.append("\n");
-        }
-        if (accounts.size() > 10) {
-            content.append("- ...等 ").append(accounts.size()).append(" 个\n");
+    private void appendDeviceSummary(StringBuilder content, String title, ArrayList<DeviceEntity> devices) {
+        var deviceNames = new ArrayList<String>();
+        devices.forEach(device -> deviceNames.add(device.getDeviceName()));
+        appendJoinedSummary(content, title, devices.size(), "台", deviceNames);
+    }
+
+    private void appendAccountSummary(StringBuilder content, String title, ArrayList<AccountEntity> accounts) {
+        var accountNames = new ArrayList<String>();
+        accounts.forEach(account -> accountNames.add(account.getName()));
+        appendJoinedSummary(content, title, accounts.size(), "个", accountNames);
+    }
+
+    private void appendJoinedSummary(StringBuilder content, String title, int size, String unit, ArrayList<String> names) {
+        content.append(title).append("：").append(size).append(" ").append(unit).append("\n");
+        if (!names.isEmpty()) {
+            content.append(String.join(" / ", names)).append("\n");
         }
         content.append("\n");
     }

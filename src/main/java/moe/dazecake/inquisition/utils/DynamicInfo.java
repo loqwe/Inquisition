@@ -38,8 +38,9 @@ public class DynamicInfo extends MemoryInfo {
         this.setUserSanInfoMap(memoryInfo.getUserSanInfoMap());
         this.setWorkUserInfoMap(memoryInfo.getWorkUserInfoMap());
         this.setFreezeUserInfoMap(memoryInfo.getFreezeUserInfoMap());
-        this.setDeviceStatusMap(memoryInfo.getDeviceStatusMap());
-        this.setDeviceCounterMap(memoryInfo.getDeviceCounterMap());
+        this.setDeviceStatusMap(memoryInfo.getDeviceStatusMap() == null ? new HashMap<>() : memoryInfo.getDeviceStatusMap());
+        this.setDeviceCounterMap(memoryInfo.getDeviceCounterMap() == null ? new HashMap<>() : memoryInfo.getDeviceCounterMap());
+        this.setDeviceLastHeartbeatMap(memoryInfo.getDeviceLastHeartbeatMap() == null ? new HashMap<>() : memoryInfo.getDeviceLastHeartbeatMap());
         this.setAnnouncement(memoryInfo.getAnnouncement());
     }
 
@@ -54,6 +55,7 @@ public class DynamicInfo extends MemoryInfo {
                 this.getFreezeUserInfoMap(),
                 this.getDeviceStatusMap(),
                 this.getDeviceCounterMap(),
+                this.getDeviceLastHeartbeatMap(),
                 this.getAnnouncement());
     }
 

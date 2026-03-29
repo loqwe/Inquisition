@@ -7,6 +7,7 @@ import moe.dazecake.inquisition.utils.Result;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.time.LocalDateTime;
 
 @Service
 public class HeartBeatServiceImpl implements HeartBeatService {
@@ -20,6 +21,7 @@ public class HeartBeatServiceImpl implements HeartBeatService {
         //状态更新
         dynamicInfo.getDeviceCounterMap().put(heartBeat.getDeviceToken(), 3);
         dynamicInfo.getDeviceStatusMap().put(heartBeat.getDeviceToken(), heartBeat.getStatus());
+        dynamicInfo.getDeviceLastHeartbeatMap().put(heartBeat.getDeviceToken(), LocalDateTime.now());
 
 
         if (dynamicInfo.getWaitUserList().isEmpty()) {

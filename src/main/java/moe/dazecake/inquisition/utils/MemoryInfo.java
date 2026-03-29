@@ -47,6 +47,9 @@ public class MemoryInfo {
     //设备摇篮计数器
     public HashMap<String, Integer> deviceCounterMap = new HashMap<>();
 
+    // device last heartbeat time
+    public HashMap<String, LocalDateTime> deviceLastHeartbeatMap = new HashMap<>();
+
     //公告信息
     public HashMap<String, String> announcement = new HashMap<>();
 
