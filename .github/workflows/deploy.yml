@@ -47,6 +47,25 @@ jobs:
           echo "Secret lengths: SERVER_HOST=${#SERVER_HOST}, SERVER_USER=${#SERVER_USER}, SSH_KEY=$(printf '%s' "$SSH_KEY" | wc -c)"
           ssh -V || true
 
+          run_debug() {
+            local label="$1"
+            shift
+            local log_file
+            log_file=$(mktemp)
+            set +e
+            "$@" >"$log_file" 2>&1
+            local status=$?
+            set -e
+            cat "$log_file"
+            if [ "$status" -ne 0 ]; then
+              local summary
+              summary=$(tail -n 20 "$log_file" | tr '\r\n' '  ' | sed 's/%/%25/g')
+              echo "::error title=${label} failed::${summary}"
+              exit "$status"
+            fi
+            rm -f "$log_file"
+          }
+
           mkdir -p "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
           chmod 600 "$SSH_KEY_PATH"
@@ -83,15 +102,15 @@ jobs:
             -o IPQoS=throughput
           )
 
-          ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
+          run_debug "ssh preflight" ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
             set -euo pipefail
             pkill -f '/root/docker/inquisition/app/Inquisition-upload.jar' || true
             rm -f /root/docker/inquisition/app/Inquisition-upload.jar
           "
 
-          scp "${SCP_OPTS[@]}" "$JAR_FILE" "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/Inquisition-upload.jar"
+          run_debug "scp upload" scp "${SCP_OPTS[@]}" "$JAR_FILE" "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/Inquisition-upload.jar"
 
-          ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
+          run_debug "ssh deploy" ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
             set -euo pipefail
             cd /root/docker/inquisition/app
             REMOTE_SIZE=\$(stat -c%s Inquisition-upload.jar)
