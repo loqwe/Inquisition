@@ -51,9 +51,13 @@ public class LogController {
     }
 
     @Login
-    @Operation(summary = "精确查询账号日志")
-    @GetMapping("/searchLogByAccount")
-    public Result<PageQueryVO<LogDTO>> searchLogByAccount(String account, Long current, Long size) {
-        return Result.success(logService.queryLogByAccount(account, current, size), "查询成功");
+    @Operation(summary = "按名称或账号搜索日志")
+    @GetMapping({"/searchLog", "/searchLogByAccount"})
+    public Result<PageQueryVO<LogDTO>> searchLog(String keyword, String account, Long current, Long size) {
+        var searchKeyword = (keyword != null && !keyword.isBlank()) ? keyword : account;
+        if (searchKeyword == null || searchKeyword.isBlank()) {
+            return Result.success(logService.queryAllLog(current, size), "查询成功");
+        }
+        return Result.success(logService.queryLogByKeyword(searchKeyword.trim(), current, size), "查询成功");
     }
 }

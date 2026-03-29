@@ -105,6 +105,7 @@ public class LogServiceImpl implements LogService {
     public PageQueryVO<LogDTO> queryAllLog(Long current, Long size) {
         //降序分页查找
         var data = logMapper.selectPage(new Page<>(current, size), Wrappers.<LogEntity>lambdaQuery()
+                .eq(LogEntity::getDelete, 0)
                 .orderByDesc(LogEntity::getId));
         return getLogPageQueryVO(data);
     }
@@ -112,7 +113,19 @@ public class LogServiceImpl implements LogService {
     @Override
     public PageQueryVO<LogDTO> queryLogByAccount(String account, Long current, Long size) {
         var data = logMapper.selectPage(new Page<>(current, size), Wrappers.<LogEntity>lambdaQuery()
+                .eq(LogEntity::getDelete, 0)
                 .eq(LogEntity::getAccount, account)
+                .orderByDesc(LogEntity::getId));
+        return getLogPageQueryVO(data);
+    }
+
+    @Override
+    public PageQueryVO<LogDTO> queryLogByKeyword(String keyword, Long current, Long size) {
+        var data = logMapper.selectPage(new Page<>(current, size), Wrappers.<LogEntity>lambdaQuery()
+                .eq(LogEntity::getDelete, 0)
+                .and(wrapper -> wrapper.like(LogEntity::getAccount, keyword)
+                        .or()
+                        .like(LogEntity::getName, keyword))
                 .orderByDesc(LogEntity::getId));
         return getLogPageQueryVO(data);
     }

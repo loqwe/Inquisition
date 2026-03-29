@@ -72,4 +72,6 @@ public interface LogService {
      * @date 2023/1/26 16:47
      */
     PageQueryVO<LogDTO> queryLogByAccount(String account, Long current, Long size);
+
+    PageQueryVO<LogDTO> queryLogByKeyword(String keyword, Long current, Long size);
 }
