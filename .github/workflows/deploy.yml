@@ -33,20 +33,34 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           set -euo pipefail
+          for name in SSH_KEY SERVER_HOST SERVER_USER; do
+            if [ -z "${!name:-}" ]; then
+              echo "ERROR: missing secret $name"
+              exit 1
+            fi
+          done
+
           JAR_FILE=$(ls build/libs/Inquisition-*.jar)
           JAR_SIZE=$(stat -c%s "$JAR_FILE")
           SSH_KEY_PATH="$HOME/.ssh/deploy_key"
 
+          echo "Secret lengths: SERVER_HOST=${#SERVER_HOST}, SERVER_USER=${#SERVER_USER}, SSH_KEY=$(printf '%s' "$SSH_KEY" | wc -c)"
+          ssh -V || true
+
           mkdir -p "$HOME/.ssh"
-          printf '%s\n' "$SSH_KEY" > "$SSH_KEY_PATH"
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
           chmod 600 "$SSH_KEY_PATH"
-          ssh-keyscan -H "$SERVER_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null
+          ssh-keygen -lf "$SSH_KEY_PATH" || true
+          ssh-keyscan -T 10 -H "$SERVER_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
           SSH_OPTS=(
+            -vvv
             -T
             -i "$SSH_KEY_PATH"
             -o IdentitiesOnly=yes
             -o BatchMode=yes
+            -o LogLevel=DEBUG3
             -o StrictHostKeyChecking=no
             -o ConnectTimeout=10
             -o ServerAliveInterval=30
@@ -56,6 +70,7 @@ jobs:
             -o IPQoS=throughput
           )
           SCP_OPTS=(
+            -v
             -i "$SSH_KEY_PATH"
             -o IdentitiesOnly=yes
             -o BatchMode=yes
