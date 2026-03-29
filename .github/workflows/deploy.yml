@@ -66,6 +66,30 @@ jobs:
             rm -f "$log_file"
           }
 
+          run_ssh_marker() {
+            local label="$1"
+            local marker="$2"
+            shift 2
+            local log_file
+            log_file=$(mktemp)
+            set +e
+            "$@" >"$log_file" 2>&1
+            local status=$?
+            set -e
+            cat "$log_file"
+            if grep -q "$marker" "$log_file"; then
+              rm -f "$log_file"
+              return 0
+            fi
+            if [ "$status" -ne 0 ]; then
+              local summary
+              summary=$(tail -n 20 "$log_file" | tr '\r\n' '  ' | sed 's/%/%25/g')
+              echo "::error title=${label} failed::${summary}"
+              exit "$status"
+            fi
+            rm -f "$log_file"
+          }
+
           mkdir -p "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
           chmod 600 "$SSH_KEY_PATH"
@@ -102,15 +126,16 @@ jobs:
             -o IPQoS=throughput
           )
 
-          run_debug "ssh preflight" ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
+          run_ssh_marker "ssh preflight" "__INQ_PREFLIGHT_OK__" ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
             set -euo pipefail
             pkill -f '/root/docker/inquisition/app/Inquisition-upload.jar' || true
             rm -f /root/docker/inquisition/app/Inquisition-upload.jar
+            echo __INQ_PREFLIGHT_OK__
           "
 
           run_debug "scp upload" scp "${SCP_OPTS[@]}" "$JAR_FILE" "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/Inquisition-upload.jar"
 
-          run_debug "ssh deploy" ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
+          run_ssh_marker "ssh deploy" "__INQ_DEPLOY_OK__" ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
             set -euo pipefail
             cd /root/docker/inquisition/app
             REMOTE_SIZE=\$(stat -c%s Inquisition-upload.jar)
@@ -125,4 +150,5 @@ jobs:
             mv -f Inquisition-upload.jar Inquisition.jar
             docker stop inquisition && docker rm inquisition
             docker run -d --name inquisition --restart always -p 2000:2000 -v /root/docker/inquisition:/config -v /root/docker/inquisition/app/Inquisition.jar:/Inquisition.jar dazecake/inquisition:v1.2.8
+            echo __INQ_DEPLOY_OK__
           "
