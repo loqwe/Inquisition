@@ -79,4 +79,11 @@ public class AdminController {
         return adminService.updateAdminNoticeConfig(JWTUtils.getId(token), configDTO);
     }
 
+    @Login
+    @Operation(summary = "立即发送管理员实时汇总")
+    @PostMapping("/sendAdminSummaryNow")
+    public Result<String> sendAdminSummaryNow(@RequestHeader("Authorization") String token) {
+        return adminService.sendAdminSummaryNow(JWTUtils.getId(token));
+    }
+
 }

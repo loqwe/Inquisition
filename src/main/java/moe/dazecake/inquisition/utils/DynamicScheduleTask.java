@@ -344,7 +344,15 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         var targetAdmins = new ArrayList<>(adminMapper.selectList(Wrappers.<AdminEntity>lambdaQuery()
                 .eq(AdminEntity::getDelete, 0)));
         targetAdmins.removeIf(admin -> !AdminNoticeConfigUtils.matchesSchedule(parseAdminNoticeConfig(admin.getNotice()).getSummarySchedule(), now.toLocalTime()));
-        if (targetAdmins.isEmpty()) {
+        sendAdminSummaryNow(targetAdmins, now);
+    }
+
+    public void sendAdminSummaryNow(ArrayList<AdminEntity> targetAdmins) {
+        sendAdminSummaryNow(targetAdmins, LocalDateTime.now().withSecond(0).withNano(0));
+    }
+
+    private void sendAdminSummaryNow(ArrayList<AdminEntity> targetAdmins, LocalDateTime now) {
+        if (targetAdmins == null || targetAdmins.isEmpty()) {
             return;
         }
 

@@ -13,6 +13,7 @@ import moe.dazecake.inquisition.model.vo.admin.AdminLoginVO;
 import moe.dazecake.inquisition.model.vo.admin.AdminNoticeConfigVO;
 import moe.dazecake.inquisition.service.intf.AdminService;
 import moe.dazecake.inquisition.utils.AdminNoticeConfigUtils;
+import moe.dazecake.inquisition.utils.DynamicScheduleTask;
 import moe.dazecake.inquisition.utils.Encoder;
 import moe.dazecake.inquisition.utils.JWTUtils;
 import moe.dazecake.inquisition.utils.Result;
@@ -20,6 +21,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
 
 @Service
 public class AdminServiceImpl implements AdminService {
@@ -32,6 +34,9 @@ public class AdminServiceImpl implements AdminService {
 
     @Resource
     ProUserMapper proUserMapper;
+
+    @Resource
+    DynamicScheduleTask dynamicScheduleTask;
 
     @Value("${spring.mail.enable:false}")
     boolean enableMail;
@@ -114,6 +119,16 @@ public class AdminServiceImpl implements AdminService {
         admin.setNotice(gson.toJson(normalizeAdminNoticeConfig(configDTO)));
         adminMapper.updateById(admin);
         return Result.success("????");
+    }
+
+    @Override
+    public Result<String> sendAdminSummaryNow(Long adminId) {
+        var admin = adminMapper.selectById(adminId);
+        if (admin == null) return Result.notFound("管理员不存在");
+        var targetAdmins = new ArrayList<AdminEntity>();
+        targetAdmins.add(admin);
+        dynamicScheduleTask.sendAdminSummaryNow(targetAdmins);
+        return Result.success("实时汇总已发送");
     }
 
     private AdminNoticeConfigDTO parseAdminNoticeConfig(AdminEntity admin) {

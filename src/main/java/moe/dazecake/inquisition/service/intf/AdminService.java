@@ -36,4 +36,6 @@ public interface AdminService {
 
     Result<String> updateAdminNoticeConfig(Long adminId, AdminNoticeConfigDTO configDTO);
 
+    Result<String> sendAdminSummaryNow(Long adminId);
+
 }
