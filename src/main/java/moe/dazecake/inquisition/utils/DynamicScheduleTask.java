@@ -6,10 +6,12 @@ import lombok.extern.slf4j.Slf4j;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.mapper.AdminMapper;
 import moe.dazecake.inquisition.mapper.DeviceMapper;
+import moe.dazecake.inquisition.mapper.LogMapper;
 import moe.dazecake.inquisition.model.dto.admin.AdminNoticeConfigDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
+import moe.dazecake.inquisition.model.entity.LogEntity;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
 import moe.dazecake.inquisition.service.impl.MessageServiceImpl;
@@ -50,6 +52,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     AdminMapper adminMapper;
 
     @Resource
+    LogMapper logMapper;
+
+    @Resource
     LogServiceImpl logService;
 
     @Resource
@@ -77,6 +82,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     Integer maxPlayerInDevice;
 
     private static final long RECENT_OFFLINE_WINDOW_HOURS = 24;
+    private static final long RECENT_TOP_OPERATOR_WINDOW_HOURS = 24;
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
@@ -375,6 +381,13 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 .eq(AccountEntity::getDelete, 0)
                 .ge(AccountEntity::getExpireTime, now)));
         abnormalAccounts.removeIf(account -> dynamicInfo.getUserSanInfoMap().containsKey(account.getId()));
+        var topOperatorAccounts = extractRecentTopOperatorAccounts(new ArrayList<>(logMapper.selectList(
+                Wrappers.<LogEntity>lambdaQuery()
+                        .eq(LogEntity::getDelete, 0)
+                        .like(LogEntity::getDetail, "\u9AD8\u7EA7\u8D44\u6DF1\u5E72\u5458")
+                        .ge(LogEntity::getTime, now.minusHours(RECENT_TOP_OPERATOR_WINDOW_HOURS))
+                        .orderByDesc(LogEntity::getTime)
+        )));
 
         var waitAccounts = dynamicInfo.getAllWaitUserInfo();
         var waitIdSet = new LinkedHashSet<Long>();
@@ -384,6 +397,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         content.append("\u65F6\u95F4: ").append(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n\n");
         appendDeviceSummary(content, "\uD83D\uDCF4 \u8FD1\u671F\u79BB\u7EBF\u8BBE\u5907", offlineDevices);
         appendAccountSummary(content, "\uD83E\uDDCA \u51BB\u7ED3\u8D26\u53F7", frozenAccounts);
+        appendJoinedSummary(content, "\u2728 \u8FD1\u671F\u9AD8\u7EA7\u8D44\u6DF1\u5E72\u5458", topOperatorAccounts.size(), "\u4E2A", topOperatorAccounts);
         appendAccountSummary(content, "\u23F0 7\u5929\u5185\u5230\u671F\u8D26\u53F7", expiringAccounts);
         appendAccountSummary(content, "\u26A0\uFE0F \u5F02\u5E38\u8D26\u53F7", abnormalAccounts);
         appendAccountSummary(content, "\uD83D\uDCE5 \u5F85\u5206\u914D\u961F\u5217", waitAccounts);
@@ -396,16 +410,33 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     private String buildSummaryTitle(int frozenCount, int offlineCount) {
         var title = new StringBuilder("[\u5BA1\u5224\u5EAD]");
+        var hasStat = false;
         if (frozenCount > 0) {
-            title.append(" \uD83E\uDDCA").append(frozenCount).append("\u4E2A");
+            title.append(" \u51BB\u7ED3").append(frozenCount).append("\u4E2A");
+            hasStat = true;
         }
         if (offlineCount > 0) {
-            title.append(" \uD83D\uDCF4").append(offlineCount).append("\u53F0");
+            title.append(" \u8BBE\u5907").append(offlineCount).append("\u53F0");
+            hasStat = true;
         }
-        if (title.length() == 5) {
+        if (!hasStat) {
             title.append(" \u72B6\u6001\u6C47\u603B");
         }
         return title.toString();
+    }
+
+    private ArrayList<String> extractRecentTopOperatorAccounts(ArrayList<LogEntity> logs) {
+        var accountNames = new LinkedHashSet<String>();
+        logs.forEach(log -> {
+            var name = log.getName();
+            if (name == null || name.isBlank()) {
+                name = log.getAccount();
+            }
+            if (name != null && !name.isBlank()) {
+                accountNames.add(name);
+            }
+        });
+        return new ArrayList<>(accountNames);
     }
 
     private boolean isRecentlyOfflineDevice(DeviceEntity device, LocalDateTime now) {
