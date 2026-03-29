@@ -12,6 +12,7 @@ import moe.dazecake.inquisition.model.vo.admin.AddProUserBalanceDTO;
 import moe.dazecake.inquisition.model.vo.admin.AdminLoginVO;
 import moe.dazecake.inquisition.model.vo.admin.AdminNoticeConfigVO;
 import moe.dazecake.inquisition.service.intf.AdminService;
+import moe.dazecake.inquisition.utils.AdminNoticeConfigUtils;
 import moe.dazecake.inquisition.utils.Encoder;
 import moe.dazecake.inquisition.utils.JWTUtils;
 import moe.dazecake.inquisition.utils.Result;
@@ -24,7 +25,6 @@ import javax.annotation.Resource;
 public class AdminServiceImpl implements AdminService {
 
     private static final String salt = "arklightscloud";
-    private static final String summarySchedule = "00:00 / 08:00 / 12:00 / 16:00 / 18:00";
     private final Gson gson = new Gson();
 
     @Resource
@@ -37,12 +37,12 @@ public class AdminServiceImpl implements AdminService {
     boolean enableMail;
 
     @Value("${spring.mail.to:}")
-    String adminMail;
+    String defaultAdminMail;
 
     @Override
     public Result<AdminLoginVO> loginAdmin(LoginAdminDTO loginAdminDTO) {
         if (loginAdminDTO.getUsername() == null || loginAdminDTO.getPassword() == null) {
-            return Result.paramError("用户名或密码为空");
+            return Result.paramError("????????");
         }
 
         var admin = adminMapper.selectOne(
@@ -52,16 +52,16 @@ public class AdminServiceImpl implements AdminService {
         );
 
         if (admin != null) {
-            return Result.success(new AdminLoginVO(JWTUtils.generateTokenForAdmin(admin)), "登录成功");
+            return Result.success(new AdminLoginVO(JWTUtils.generateTokenForAdmin(admin)), "????");
         } else {
-            return Result.unauthorized("用户名或密码错误");
+            return Result.unauthorized("????????");
         }
     }
 
     @Override
     public Result<String> updateAdminPassword(ChangeAdminPasswordDTO changeAdminPasswordDTO) {
         if (changeAdminPasswordDTO.getUsername() == null || changeAdminPasswordDTO.getOldPassword() == null || changeAdminPasswordDTO.getNewPassword() == null) {
-            return Result.paramError("用户名或密码为空");
+            return Result.paramError("????????");
         }
 
         var admin = adminMapper.selectOne(
@@ -73,9 +73,9 @@ public class AdminServiceImpl implements AdminService {
         if (admin != null) {
             admin.setPassword(Encoder.MD5(changeAdminPasswordDTO.getNewPassword() + salt));
             adminMapper.updateById(admin);
-            return Result.success("修改成功");
+            return Result.success("????");
         } else {
-            return Result.unauthorized("用户名或密码错误");
+            return Result.unauthorized("????????");
         }
     }
 
@@ -85,45 +85,42 @@ public class AdminServiceImpl implements AdminService {
         if (proUser != null) {
             proUser.setBalance(proUser.getBalance() + addProUserBalanceDTO.getBalance());
             proUserMapper.updateById(proUser);
-            return Result.success("添加成功");
+            return Result.success("????");
         } else {
-            return Result.notFound("用户不存在");
+            return Result.notFound("?????");
         }
     }
 
     @Override
     public Result<AdminNoticeConfigVO> getAdminNoticeConfig(Long adminId) {
         var admin = adminMapper.selectById(adminId);
-        if (admin == null) return Result.notFound("管理员不存在");
+        if (admin == null) return Result.notFound("??????");
         var config = parseAdminNoticeConfig(admin);
-        return Result.success(new AdminNoticeConfigVO(config.getWxPusherEnable(), config.getWxPusherUid(),
-                config.getPushPlusEnable(), config.getPushPlusToken(), enableMail, adminMail, summarySchedule), "获取成功");
+        return Result.success(new AdminNoticeConfigVO(
+                config.getMailEnable(),
+                config.getAdminMail(),
+                config.getSummarySchedule(),
+                config.getWxPusherEnable(),
+                config.getWxPusherUid(),
+                config.getPushPlusEnable(),
+                config.getPushPlusToken()
+        ), "????");
     }
 
     @Override
     public Result<String> updateAdminNoticeConfig(Long adminId, AdminNoticeConfigDTO configDTO) {
         var admin = adminMapper.selectById(adminId);
-        if (admin == null) return Result.notFound("管理员不存在");
+        if (admin == null) return Result.notFound("??????");
         admin.setNotice(gson.toJson(normalizeAdminNoticeConfig(configDTO)));
         adminMapper.updateById(admin);
-        return Result.success("设置成功");
+        return Result.success("????");
     }
 
     private AdminNoticeConfigDTO parseAdminNoticeConfig(AdminEntity admin) {
-        try {
-            if (admin.getNotice() == null || admin.getNotice().isBlank()) return new AdminNoticeConfigDTO();
-            return normalizeAdminNoticeConfig(gson.fromJson(admin.getNotice(), AdminNoticeConfigDTO.class));
-        } catch (Exception e) {
-            return new AdminNoticeConfigDTO();
-        }
+        return AdminNoticeConfigUtils.parse(gson, admin.getNotice(), enableMail, defaultAdminMail);
     }
 
     private AdminNoticeConfigDTO normalizeAdminNoticeConfig(AdminNoticeConfigDTO configDTO) {
-        var config = configDTO == null ? new AdminNoticeConfigDTO() : configDTO;
-        config.setWxPusherEnable(Boolean.TRUE.equals(config.getWxPusherEnable()));
-        config.setWxPusherUid(config.getWxPusherUid() == null ? "" : config.getWxPusherUid().trim());
-        config.setPushPlusEnable(Boolean.TRUE.equals(config.getPushPlusEnable()));
-        config.setPushPlusToken(config.getPushPlusToken() == null ? "" : config.getPushPlusToken().trim());
-        return config;
+        return AdminNoticeConfigUtils.normalize(configDTO, enableMail, defaultAdminMail);
     }
 }

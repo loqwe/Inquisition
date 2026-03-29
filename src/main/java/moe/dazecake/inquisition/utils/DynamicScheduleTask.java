@@ -1,10 +1,14 @@
 package moe.dazecake.inquisition.utils;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.google.gson.Gson;
 import lombok.extern.slf4j.Slf4j;
 import moe.dazecake.inquisition.mapper.AccountMapper;
+import moe.dazecake.inquisition.mapper.AdminMapper;
 import moe.dazecake.inquisition.mapper.DeviceMapper;
+import moe.dazecake.inquisition.model.dto.admin.AdminNoticeConfigDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
@@ -31,6 +35,8 @@ import java.util.LinkedHashSet;
 @EnableScheduling
 public class DynamicScheduleTask implements SchedulingConfigurer {
 
+    private final Gson gson = new Gson();
+
     @Resource
     DynamicInfo dynamicInfo;
 
@@ -39,6 +45,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     @Resource
     DeviceMapper deviceMapper;
+
+    @Resource
+    AdminMapper adminMapper;
 
     @Resource
     LogServiceImpl logService;
@@ -305,7 +314,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         //管理员状态汇总
         taskRegistrar.addTriggerTask(
                 this::sendAdminSummary,
-                triggerContext -> new CronTrigger("0 0 0,8,12,16,18 * * ?").nextExecutionTime(triggerContext)
+                triggerContext -> new CronTrigger("0 * * * * ?").nextExecutionTime(triggerContext)
         );
         //异常账号检测
         taskRegistrar.addTriggerTask(
@@ -331,7 +340,14 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     }
 
     private void sendAdminSummary() {
-        var now = LocalDateTime.now();
+        var now = LocalDateTime.now().withSecond(0).withNano(0);
+        var targetAdmins = new ArrayList<>(adminMapper.selectList(Wrappers.<AdminEntity>lambdaQuery()
+                .eq(AdminEntity::getDelete, 0)));
+        targetAdmins.removeIf(admin -> !AdminNoticeConfigUtils.matchesSchedule(parseAdminNoticeConfig(admin.getNotice()).getSummarySchedule(), now.toLocalTime()));
+        if (targetAdmins.isEmpty()) {
+            return;
+        }
+
         var offlineDevices = new ArrayList<>(deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
                 .eq(DeviceEntity::getDelete, 0)));
         offlineDevices.removeIf(device -> dynamicInfo.getDeviceStatusMap().getOrDefault(device.getDeviceToken(), 0) != 0);
@@ -361,7 +377,11 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         appendAccountSummary(content, "7天内到期账号", expiringAccounts, true);
         appendAccountSummary(content, "异常账号", abnormalAccounts, false);
         appendAccountSummary(content, "待分配队列", waitAccounts, false);
-        messageService.pushAdmin("[审判庭] 管理员状态汇总 " + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), content.toString());
+        messageService.pushAdmin(targetAdmins, "[审判庭] 管理员状态汇总 " + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), content.toString());
+    }
+
+    private AdminNoticeConfigDTO parseAdminNoticeConfig(String notice) {
+        return AdminNoticeConfigUtils.parse(gson, notice, false, "");
     }
 
     private void appendDeviceSummary(StringBuilder content, String title, ArrayList<DeviceEntity> devices) {
