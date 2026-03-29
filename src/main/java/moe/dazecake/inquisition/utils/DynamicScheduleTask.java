@@ -404,7 +404,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     private void appendDeviceSummary(StringBuilder content, String title, ArrayList<DeviceEntity> devices) {
         var deviceNames = new ArrayList<String>();
-        devices.forEach(device -> deviceNames.add(device.getDeviceName()));
+        devices.forEach(device -> deviceNames.add("?? " + device.getDeviceName()));
         appendJoinedSummary(content, title, devices.size(), "台", deviceNames);
     }
 
