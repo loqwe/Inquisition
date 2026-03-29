@@ -36,7 +36,6 @@ jobs:
           JAR_FILE=$(ls build/libs/Inquisition-*.jar)
           JAR_SIZE=$(stat -c%s "$JAR_FILE")
           SSH_KEY_PATH="$HOME/.ssh/deploy_key"
-          PART_PREFIX="Inquisition-upload.part-"
 
           mkdir -p "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" > "$SSH_KEY_PATH"
@@ -53,53 +52,27 @@ jobs:
             -o ServerAliveCountMax=6
             -o IPQoS=throughput
           )
+          SCP_OPTS=(
+            -i "$SSH_KEY_PATH"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=no
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=6
+            -o IPQoS=throughput
+          )
 
           ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
             set -euo pipefail
             pkill -f '/root/docker/inquisition/app/Inquisition-upload.jar' || true
-            rm -f /root/docker/inquisition/app/Inquisition-upload.jar /root/docker/inquisition/app/${PART_PREFIX}*
+            rm -f /root/docker/inquisition/app/Inquisition-upload.jar
           "
 
-          rm -f ${PART_PREFIX}*
-          split -b 8m -d -a 3 "$JAR_FILE" "$PART_PREFIX"
-
-          for part in ${PART_PREFIX}*; do
-            PART_NAME=$(basename "$part")
-            PART_SIZE=$(stat -c%s "$part")
-            UPLOADED=0
-
-            for attempt in 1 2 3; do
-              rm -f "$part.failed" 2>/dev/null || true
-              timeout 300 ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" \
-                "cat > /root/docker/inquisition/app/${PART_NAME}" < "$part" || true
-
-              REMOTE_PART_SIZE=$(ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" \
-                "stat -c%s /root/docker/inquisition/app/${PART_NAME} 2>/dev/null || echo 0")
-
-              echo "${PART_NAME}: local=${PART_SIZE}, remote=${REMOTE_PART_SIZE}, attempt=${attempt}"
-              if [ "$REMOTE_PART_SIZE" -eq "$PART_SIZE" ]; then
-                UPLOADED=1
-                break
-              fi
-
-              ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" \
-                "rm -f /root/docker/inquisition/app/${PART_NAME}"
-              sleep 2
-            done
-
-            if [ "$UPLOADED" -ne 1 ]; then
-              echo "ERROR: Failed to upload ${PART_NAME}"
-              exit 1
-            fi
-          done
-
-          rm -f ${PART_PREFIX}*
+          scp "${SCP_OPTS[@]}" "$JAR_FILE" "${SERVER_USER}@${SERVER_HOST}:/root/docker/inquisition/app/Inquisition-upload.jar"
 
           ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "
             set -euo pipefail
             cd /root/docker/inquisition/app
-            cat ${PART_PREFIX}* > Inquisition-upload.jar
-            rm -f ${PART_PREFIX}*
             REMOTE_SIZE=\$(stat -c%s Inquisition-upload.jar)
             echo \"Uploaded: \$REMOTE_SIZE bytes, expected: ${JAR_SIZE} bytes\"
             if [ \"\$REMOTE_SIZE\" -ne \"${JAR_SIZE}\" ]; then
