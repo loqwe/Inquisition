@@ -45,20 +45,26 @@ jobs:
           SSH_OPTS=(
             -T
             -i "$SSH_KEY_PATH"
+            -o IdentitiesOnly=yes
             -o BatchMode=yes
             -o StrictHostKeyChecking=no
             -o ConnectTimeout=10
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=6
+            -o PubkeyAcceptedAlgorithms=+ssh-rsa
+            -o HostkeyAlgorithms=+ssh-rsa
             -o IPQoS=throughput
           )
           SCP_OPTS=(
             -i "$SSH_KEY_PATH"
+            -o IdentitiesOnly=yes
             -o BatchMode=yes
             -o StrictHostKeyChecking=no
             -o ConnectTimeout=10
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=6
+            -o PubkeyAcceptedAlgorithms=+ssh-rsa
+            -o HostkeyAlgorithms=+ssh-rsa
             -o IPQoS=throughput
           )
 
