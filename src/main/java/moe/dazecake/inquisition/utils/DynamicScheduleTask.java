@@ -350,7 +350,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     private void sendAdminSummary() {
         var now = LocalDateTime.now().withSecond(0).withNano(0);
         var targetAdmins = new ArrayList<>(adminMapper.selectList(Wrappers.<AdminEntity>lambdaQuery()
-                .eq(AdminEntity::getDelete, 0)));
+                .and(wrapper -> wrapper.eq(AdminEntity::getDelete, 0)
+                        .or()
+                        .isNull(AdminEntity::getDelete))));
         targetAdmins.removeIf(admin -> !AdminNoticeConfigUtils.matchesSchedule(parseAdminNoticeConfig(admin.getNotice()).getSummarySchedule(), now.toLocalTime()));
         sendAdminSummaryNow(targetAdmins, now);
     }
@@ -392,25 +394,33 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         var waitAccounts = dynamicInfo.getAllWaitUserInfo();
         var waitIdSet = new LinkedHashSet<Long>();
         waitAccounts.removeIf(account -> !waitIdSet.add(account.getId()));
+        var coolDownAccounts = getTempCoolDownAccounts(waitAccounts, now);
 
         var content = new StringBuilder();
         content.append("\u65F6\u95F4: ").append(now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n\n");
         appendDeviceSummary(content, "\uD83D\uDCF4 \u8FD1\u671F\u79BB\u7EBF\u8BBE\u5907", offlineDevices);
+        appendAccountSummary(content, "\u2744\uFE0F \u51B7\u5374", coolDownAccounts);
         appendAccountSummary(content, "\uD83E\uDDCA \u51BB\u7ED3\u8D26\u53F7", frozenAccounts);
         appendJoinedSummary(content, "\u2728 \u8FD1\u671F\u9AD8\u7EA7\u8D44\u6DF1\u5E72\u5458", topOperatorAccounts.size(), "\u4E2A", topOperatorAccounts);
         appendAccountSummary(content, "\u23F0 7\u5929\u5185\u5230\u671F\u8D26\u53F7", expiringAccounts);
         appendAccountSummary(content, "\u26A0\uFE0F \u5F02\u5E38\u8D26\u53F7", abnormalAccounts);
         appendAccountSummary(content, "\uD83D\uDCE5 \u5F85\u5206\u914D\u961F\u5217", waitAccounts);
-        messageService.pushAdmin(targetAdmins, buildSummaryTitle(frozenAccounts.size(), offlineDevices.size()), content.toString());
+        var title = buildSummaryTitle(coolDownAccounts.size(), frozenAccounts.size(), offlineDevices.size());
+        messageService.pushAdmin(targetAdmins, title, content.toString());
+        logService.logInfo("Admin summary sent", "title: " + title + "\nadmins: " + targetAdmins.size());
     }
 
     private AdminNoticeConfigDTO parseAdminNoticeConfig(String notice) {
         return AdminNoticeConfigUtils.parse(gson, notice, false, "");
     }
 
-    private String buildSummaryTitle(int frozenCount, int offlineCount) {
+    private String buildSummaryTitle(int coolDownCount, int frozenCount, int offlineCount) {
         var title = new StringBuilder("[\u5BA1\u5224\u5EAD]");
         var hasStat = false;
+        if (coolDownCount > 0) {
+            title.append(" \u51B7\u5374").append(coolDownCount).append("\u4E2A");
+            hasStat = true;
+        }
         if (frozenCount > 0) {
             title.append(" \u51BB\u7ED3").append(frozenCount).append("\u4E2A");
             hasStat = true;
@@ -451,6 +461,39 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         var deviceNames = new ArrayList<String>();
         devices.forEach(device -> deviceNames.add("\u8BBE\u5907 " + device.getDeviceName()));
         appendJoinedSummary(content, title, devices.size(), "\u53F0", deviceNames);
+    }
+
+    private ArrayList<AccountEntity> getTempCoolDownAccounts(ArrayList<AccountEntity> waitAccounts, LocalDateTime now) {
+        var coolDownIds = new LinkedHashSet<Long>();
+        waitAccounts.forEach(account -> {
+            var freezeUntil = dynamicInfo.getFreezeUserInfoMap().get(account.getId());
+            if (freezeUntil != null && freezeUntil.isAfter(now)) {
+                coolDownIds.add(account.getId());
+            }
+        });
+        dynamicInfo.getFreezeUserInfoMap().forEach((accountId, freezeUntil) -> {
+            if (freezeUntil != null && freezeUntil.isAfter(now)) {
+                coolDownIds.add(accountId);
+            }
+        });
+        if (coolDownIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        var accountMap = new java.util.HashMap<Long, AccountEntity>();
+        accountMapper.selectBatchIds(coolDownIds).forEach(account -> {
+            if ((account.getDelete() == null || account.getDelete() == 0)
+                    && (account.getExpireTime() == null || account.getExpireTime().isAfter(now))) {
+                accountMap.put(account.getId(), account);
+            }
+        });
+        var coolDownAccounts = new ArrayList<AccountEntity>();
+        coolDownIds.forEach(accountId -> {
+            var account = accountMap.get(accountId);
+            if (account != null) {
+                coolDownAccounts.add(account);
+            }
+        });
+        return coolDownAccounts;
     }
 
     private void appendAccountSummary(StringBuilder content, String title, ArrayList<AccountEntity> accounts) {
