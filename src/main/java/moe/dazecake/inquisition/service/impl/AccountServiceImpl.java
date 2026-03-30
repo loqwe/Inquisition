@@ -130,14 +130,17 @@ public class AccountServiceImpl implements AccountService {
     @Override
     public PageQueryVO<AccountWithSanVO> queryAccount(Long current, Long size, String keyword) {
         var data = accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
+                .eq(AccountEntity::getDelete, 0)
                 .eq(AccountEntity::getId, keyword));
 
         if (data.getRecords().size() == 0) {
             data = accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
+                    .eq(AccountEntity::getDelete, 0)
                     .like(AccountEntity::getAccount, keyword));
         }
         if (data.getRecords().size() == 0) {
             data = accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
+                    .eq(AccountEntity::getDelete, 0)
                     .like(AccountEntity::getName, keyword));
         }
 
