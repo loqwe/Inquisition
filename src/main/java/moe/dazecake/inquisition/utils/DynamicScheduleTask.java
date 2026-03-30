@@ -91,8 +91,12 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 () -> {
                     //log.info("正在巡检队列: " + LocalDateTime.now().toLocalTime());
                     //检查等待队列中是否存在重复项，若存在删除多余的重复项
+                    var restored = taskService.restoreExpiredCooldownTasks();
                     LinkedHashSet<Long> set = new LinkedHashSet<>(dynamicInfo.getWaitUserList());
                     dynamicInfo.setWaitUserList(new ArrayList<>(set));
+                    if (restored > 0) {
+                        log.info("【审判庭】已恢复冷却到期账号数: " + restored);
+                    }
                 },
                 triggerContext -> new CronTrigger("0 */1 * * * *").nextExecutionTime(triggerContext)
         );

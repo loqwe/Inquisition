@@ -63,6 +63,8 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public Result<AccountDTO> getTask(String deviceToken) {
 
+        restoreExpiredCooldownTasks();
+
         if (!dynamicInfo.getActive()) {
             return Result.failed("审判庭暂停任务授权中");
         }
@@ -514,6 +516,56 @@ public class TaskServiceImpl implements TaskService {
             //不在冻结状态
             return false;
         }
+    }
+
+    public int restoreExpiredCooldownTasks() {
+        var now = LocalDateTime.now();
+        var expiredIds = new java.util.ArrayList<Long>();
+        synchronized (dynamicInfo.getFreezeUserInfoMap()) {
+            for (java.util.Map.Entry<Long, LocalDateTime> entry : dynamicInfo.getFreezeUserInfoMap().entrySet()) {
+                if (entry.getValue() == null || !entry.getValue().isAfter(now)) {
+                    expiredIds.add(entry.getKey());
+                }
+            }
+        }
+        var restored = 0;
+        for (Long id : expiredIds) {
+            var account = accountMapper.selectById(id);
+            synchronized (dynamicInfo.getFreezeUserInfoMap()) {
+                var freezeUntil = dynamicInfo.getFreezeUserInfoMap().get(id);
+                if (freezeUntil != null && freezeUntil.isAfter(now)) {
+                    continue;
+                }
+                dynamicInfo.getFreezeUserInfoMap().remove(id);
+            }
+            if (account == null || account.getDelete() == 1 || account.getFreeze() == 1 || account.getExpireTime().isBefore(now)) {
+                continue;
+            }
+            if (dynamicInfo.getWorkUserList().contains(id)) {
+                continue;
+            }
+            synchronized (dynamicInfo.getWaitUserList()) {
+                if (!dynamicInfo.getWaitUserList().contains(id)) {
+                    dynamicInfo.getWaitUserList().add(id);
+                }
+            }
+            restored++;
+        }
+        return restored;
+    }
+
+    public java.util.HashMap<Long, LocalDateTime> getActiveCooldownTaskMap() {
+        restoreExpiredCooldownTasks();
+        var result = new java.util.HashMap<Long, LocalDateTime>();
+        var now = LocalDateTime.now();
+        synchronized (dynamicInfo.getFreezeUserInfoMap()) {
+            dynamicInfo.getFreezeUserInfoMap().forEach((id, freezeUntil) -> {
+                if (freezeUntil != null && freezeUntil.isAfter(now)) {
+                    result.put(id, freezeUntil);
+                }
+            });
+        }
+        return result;
     }
 
     @Override

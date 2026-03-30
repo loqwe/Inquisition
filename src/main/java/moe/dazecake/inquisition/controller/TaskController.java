@@ -68,6 +68,7 @@ public class TaskController {
     @Operation(summary = "查询待分配任务列表")
     @GetMapping("/showFreeTaskList")
     public Result<ArrayList<AccountEntity>> showTaskList() {
+        taskService.restoreExpiredCooldownTasks();
         return Result.success(dynamicInfo.getAllWaitUserInfo(), "查询成功");
     }
 
@@ -82,6 +83,7 @@ public class TaskController {
     @Operation(summary = "查询已冻结任务列表")
     @GetMapping("/showFreezeTaskList")
     public Result<HashMap<Long, LocalDateTime>> showFreezeTaskList() {
+        taskService.restoreExpiredCooldownTasks();
         return Result.success(dynamicInfo.getFreezeUserInfoMap(), "查询成功");
     }
 
