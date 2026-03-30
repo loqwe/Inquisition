@@ -11,6 +11,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.AccountService;
+import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Service;
@@ -43,9 +44,28 @@ public class AccountServiceImpl implements AccountService {
                 .setPassword(addAccountDTO.getPassword())
                 .setServer(addAccountDTO.getServer())
                 .setExpireTime(addAccountDTO.getExpireTime());
+        if (addAccountDTO.getFreeze() != null) {
+            accountEntity.setFreeze(addAccountDTO.getFreeze());
+        }
+        if (addAccountDTO.getTaskType() != null) {
+            accountEntity.setTaskType(addAccountDTO.getTaskType());
+        }
+        if (addAccountDTO.getRefresh() != null) {
+            accountEntity.setRefresh(addAccountDTO.getRefresh());
+        }
         if (addAccountDTO.getAgent() != null) {
             accountEntity.setAgent(addAccountDTO.getAgent());
         }
+        if (addAccountDTO.getConfig() != null) {
+            accountEntity.setConfig(addAccountDTO.getConfig());
+        }
+        if (addAccountDTO.getActive() != null) {
+            accountEntity.setActive(addAccountDTO.getActive());
+        }
+        if (addAccountDTO.getNotice() != null) {
+            accountEntity.setNotice(addAccountDTO.getNotice());
+        }
+        DailyPlanUtil.normalizeDailyPlan(accountEntity);
 
         accountMapper.insert(accountEntity);
     }
@@ -97,6 +117,7 @@ public class AccountServiceImpl implements AccountService {
         var account = accountMapper.selectById(accountDTO.getId());
 
         if (account != null) {
+            DailyPlanUtil.normalizeDailyPlan(accountDTO);
             accountMapper.updateById(AccountConvert.INSTANCE.toAccountEntity(accountDTO));
         }
     }

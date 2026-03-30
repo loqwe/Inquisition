@@ -20,6 +20,7 @@ public class Daily {
             add(new Fight("1-7", 99));
         }
     };
+    private List<DailyPlanNode> plan = new ArrayList<>();
     private Sanity sanity = new Sanity(0, 0);
     private boolean mail = true;
     private Offer offer = new Offer(

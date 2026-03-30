@@ -15,6 +15,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.vo.UserLoginVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.UserService;
+import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.JWTUtils;
 import moe.dazecake.inquisition.utils.Result;
@@ -142,6 +143,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public Result<String> updateMyAccount(Long id, AccountDTO accountDTO) {
         var newAccount = AccountConvert.INSTANCE.toAccountEntity(accountDTO);
+        DailyPlanUtil.normalizeDailyPlan(newAccount);
         var oldAccount = accountMapper.selectOne(
                 Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getId, id)

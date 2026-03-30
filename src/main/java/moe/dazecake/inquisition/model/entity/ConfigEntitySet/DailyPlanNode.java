@@ -7,9 +7,10 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Fight {
+public class DailyPlanNode {
 
-    private String level;
-    private int num;
+    private String type = "fight";
+    private Fight fight = new Fight("", 1);
+    private LoopGroup loopGroup = new LoopGroup();
 
 }

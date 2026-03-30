@@ -12,6 +12,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.local.UserSan;
 import moe.dazecake.inquisition.service.intf.TaskService;
+import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.Result;
@@ -59,6 +60,13 @@ public class TaskServiceImpl implements TaskService {
     @Value("${wx-pusher.enable:false}")
     boolean enableWxPusher;
 
+    private AccountDTO buildTaskAccountDTO(AccountEntity account) {
+        var dto = AccountConvert.INSTANCE.toAccountDTO(account);
+        DailyPlanUtil.normalizeDailyPlan(dto);
+        DailyPlanUtil.compileDailyPlanForDevice(dto);
+        return dto;
+    }
+
 
     @Override
     public Result<AccountDTO> getTask(String deviceToken) {
@@ -79,7 +87,7 @@ public class TaskServiceImpl implements TaskService {
         //重复请求检查
         for (Long worker : dynamicInfo.getWorkUserList()) {
             if (dynamicInfo.getWorkUserInfoMap().get(worker).getDeviceToken().equals(deviceToken)) {
-                return Result.repeatSuccess(AccountConvert.INSTANCE.toAccountDTO(accountMapper.selectById(worker)), "重复获取");
+                return Result.repeatSuccess(buildTaskAccountDTO(accountMapper.selectById(worker)), "重复获取");
             }
         }
 
@@ -167,7 +175,7 @@ public class TaskServiceImpl implements TaskService {
             dynamicInfo.setUserSanZero(account.getId());
 
 
-            return Result.success(AccountConvert.INSTANCE.toAccountDTO(account), "获取成功");
+            return Result.success(buildTaskAccountDTO(account), "获取成功");
 
         } else {
             return Result.success("待分配队列为空");

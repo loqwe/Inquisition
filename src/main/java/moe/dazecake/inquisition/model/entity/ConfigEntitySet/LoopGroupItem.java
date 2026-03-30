@@ -7,9 +7,9 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Fight {
+public class LoopGroupItem {
 
-    private String level;
-    private int num;
+    private String level = "";
+    private Integer weight = 1;
 
 }
