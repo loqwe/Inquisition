@@ -91,6 +91,12 @@ public interface TaskService {
 
     boolean checkFreeze(AccountEntity account);
 
+    Result<String> showAccountCooldown(Long id);
+
+    Result<String> setAccountCooldownUntil(Long id, String freezeUntil);
+
+    Result<String> clearAccountCooldown(Long id);
+
     void lockTask(String deviceToken, AccountEntity account);
 
     void log(String deviceToken, AccountEntity account, String level, String title, String content, String imgUrl);

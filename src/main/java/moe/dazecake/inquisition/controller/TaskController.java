@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import moe.dazecake.inquisition.annotation.Login;
+import moe.dazecake.inquisition.model.dto.account.AccountCooldownDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountIDDTO;
 import moe.dazecake.inquisition.model.dto.device.DeviceTokenDTO;
@@ -82,6 +83,27 @@ public class TaskController {
     @GetMapping("/showFreezeTaskList")
     public Result<HashMap<Long, LocalDateTime>> showFreezeTaskList() {
         return Result.success(dynamicInfo.getFreezeUserInfoMap(), "查询成功");
+    }
+
+    @Login
+    @Operation(summary = "Show account cooldown")
+    @GetMapping("/showAccountCooldown")
+    public Result<String> showAccountCooldown(Long userId) {
+        return taskService.showAccountCooldown(userId);
+    }
+
+    @Login
+    @Operation(summary = "Set account cooldown")
+    @PostMapping("/setAccountCooldownUntil")
+    public Result<String> setAccountCooldownUntil(@RequestBody AccountCooldownDTO accountCooldownDTO) {
+        return taskService.setAccountCooldownUntil(accountCooldownDTO.getId(), accountCooldownDTO.getFreezeUntil());
+    }
+
+    @Login
+    @Operation(summary = "Clear account cooldown")
+    @PostMapping("/clearAccountCooldown")
+    public Result<String> clearAccountCooldown(@RequestBody AccountIDDTO accountIDDTO) {
+        return taskService.clearAccountCooldown(accountIDDTO.getId());
     }
 
     @Login

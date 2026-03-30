@@ -517,6 +517,62 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
+    public Result<String> showAccountCooldown(Long id) {
+        if (id == null) {
+            return Result.paramError("账号不能为空");
+        }
+        var account = accountMapper.selectById(id);
+        if (account == null || account.getDelete() == 1) {
+            return Result.notFound("账号不存在");
+        }
+        var freezeUntil = dynamicInfo.getFreezeUserInfoMap().get(id);
+        if (freezeUntil != null && freezeUntil.isBefore(LocalDateTime.now())) {
+            dynamicInfo.getFreezeUserInfoMap().remove(id);
+            freezeUntil = null;
+        }
+        return Result.success(freezeUntil == null ? null : freezeUntil.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME), "查询成功");
+    }
+
+    @Override
+    public Result<String> setAccountCooldownUntil(Long id, String freezeUntil) {
+        if (id == null) {
+            return Result.paramError("账号不能为空");
+        }
+        var account = accountMapper.selectById(id);
+        if (account == null || account.getDelete() == 1) {
+            return Result.notFound("账号不存在");
+        }
+        if (freezeUntil == null || freezeUntil.isBlank()) {
+            return Result.paramError("冷却时间不能为空");
+        }
+        LocalDateTime parsedFreezeUntil;
+        try {
+            parsedFreezeUntil = LocalDateTime.parse(freezeUntil.length() == 16 ? freezeUntil + ":00" : freezeUntil);
+        } catch (Exception exception) {
+            return Result.paramError("冷却时间格式错误");
+        }
+        if (!parsedFreezeUntil.isAfter(LocalDateTime.now())) {
+            return Result.paramError("冷却时间必须晚于当前时间");
+        }
+        forceHaltTask(id);
+        dynamicInfo.getFreezeUserInfoMap().put(id, parsedFreezeUntil);
+        return Result.success("设置成功");
+    }
+
+    @Override
+    public Result<String> clearAccountCooldown(Long id) {
+        if (id == null) {
+            return Result.paramError("账号不能为空");
+        }
+        var account = accountMapper.selectById(id);
+        if (account == null || account.getDelete() == 1) {
+            return Result.notFound("账号不存在");
+        }
+        dynamicInfo.getFreezeUserInfoMap().remove(id);
+        return Result.success("清除成功");
+    }
+
+    @Override
     public void lockTask(String deviceToken, AccountEntity account) {
         LocalDateTime localDateTime = LocalDateTime.now();
         switch (TaskType.getByStr(account.getTaskType())) {
