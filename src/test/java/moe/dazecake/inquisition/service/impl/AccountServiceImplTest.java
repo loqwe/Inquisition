@@ -8,13 +8,15 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doReturn;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class AccountServiceImplTest {
 
@@ -38,19 +40,25 @@ class AccountServiceImplTest {
     }
 
     @Test
-    void queryAccountSearchesExactNameOrAccountBeforeFuzzyMatch() {
-        var service = spy(new AccountServiceImpl());
+    void queryAccountKeepsFuzzyMatchesAfterExactMatch() {
+        var service = new AccountServiceImpl();
+        service.accountMapper = mock(AccountMapper.class);
         service.dynamicInfo = new DynamicInfo();
 
-        var exactPage = new Page<AccountEntity>(1, 10);
-        exactPage.setRecords(List.of(new AccountEntity().setId(20L).setName("账号20").setAccount("13505732117")));
-        exactPage.setTotal(1);
+        var searchPage = new Page<AccountEntity>(1, 10);
+        searchPage.setRecords(List.of(
+                new AccountEntity().setId(1L).setName("账号1").setAccount("16603003649"),
+                new AccountEntity().setId(10L).setName("账号10").setAccount("16603003650")
+        ));
+        searchPage.setTotal(2);
 
-        doReturn(exactPage).when(service).queryExactAccountPage(1L, 10L, "账号20");
+        when(service.accountMapper.searchActiveExactFirst(any(Page.class), eq("账号1"), isNull())).thenReturn(searchPage);
 
-        service.queryAccount(1L, 10L, "账号20");
+        var result = service.queryAccount(1L, 10L, "账号1");
 
-        verify(service).queryExactAccountPage(1L, 10L, "账号20");
-        verify(service, never()).queryFuzzyAccountPage(any(), any(), any());
+        assertEquals(2, result.getTotal());
+        assertEquals("账号1", result.getRecords().get(0).getName());
+        assertEquals("账号10", result.getRecords().get(1).getName());
+        verify(service.accountMapper).searchActiveExactFirst(any(Page.class), eq("账号1"), isNull());
     }
 }
