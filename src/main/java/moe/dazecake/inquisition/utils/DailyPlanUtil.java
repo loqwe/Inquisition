@@ -48,7 +48,11 @@ public final class DailyPlanUtil {
         }
         var compiled = new ArrayList<Fight>();
         for (DailyPlanNode node : daily.getPlan()) {
-            appendNode(compiled, normalizePlanNode(node));
+            var normalizedNode = normalizePlanNode(node);
+            appendNode(compiled, normalizedNode);
+            if ("loop_group".equals(normalizedNode.getType())) {
+                break;
+            }
         }
         daily.setFight(compiled);
     }

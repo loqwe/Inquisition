@@ -29,7 +29,7 @@ public interface AccountService {
     int transferAccount(HashMap<String, String> accountJson);
 
     /**
-     * 逻辑删除账号，将导致账号不可登录注册
+     * 物理删除账号，同时清理运行时队列
      *
      * @param id id
      * @author DazeCake

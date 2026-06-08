@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:inquisition-mysql}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:inquisition}?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&serverTimezone=UTC
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
+    type: com.alibaba.druid.pool.DruidDataSource
+  sql:
+    init:
+      mode: never
+
+mybatis:
+  table:
+    auto: update
+  database:
+    type: mysql
+
+mybatis-plus:
+  mapper-locations: classpath*:com/gitee/sunchenbin/mybatis/actable/mapping/*/*.xml

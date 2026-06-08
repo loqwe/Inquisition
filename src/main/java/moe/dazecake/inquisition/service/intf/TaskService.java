@@ -2,7 +2,10 @@ package moe.dazecake.inquisition.service.intf;
 
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.utils.Result;
+
+import java.util.HashMap;
 
 public interface TaskService {
 
@@ -90,6 +93,8 @@ public interface TaskService {
     boolean checkActivationTime(AccountEntity account);
 
     boolean checkFreeze(AccountEntity account);
+
+    HashMap<Long, AccountCooldownVO> getActiveCooldownTaskInfoMap();
 
     Result<String> showAccountCooldown(Long id);
 

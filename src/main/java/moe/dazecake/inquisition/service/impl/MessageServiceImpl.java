@@ -73,7 +73,10 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void pushAdmin(String title, String content) {
-        pushAdmin(adminMapper.selectList(Wrappers.<AdminEntity>lambdaQuery().eq(AdminEntity::getDelete, 0)), title, content);
+        pushAdmin(adminMapper.selectList(Wrappers.<AdminEntity>lambdaQuery()
+                .and(wrapper -> wrapper.eq(AdminEntity::getDelete, 0)
+                        .or()
+                        .isNull(AdminEntity::getDelete))), title, content);
     }
 
     public void pushAdmin(List<AdminEntity> admins, String title, String content) {

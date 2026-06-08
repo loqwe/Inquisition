@@ -131,6 +131,7 @@ public class CDKServiceImpl implements CDKService {
                 Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getAccount, accountEntity.getAccount())
                         .eq(AccountEntity::getPassword, accountEntity.getPassword())
+                        .eq(AccountEntity::getDelete, 0)
         );
         accountService.forceFightAccount(account.getId(), true);
 

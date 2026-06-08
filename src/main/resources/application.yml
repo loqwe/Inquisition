@@ -9,11 +9,15 @@ server:
 spring:
   # 数据库配置
   datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://inquisition-mysql:3306/inquisition?useSSL=false&characterEncoding=UTF-8&serverTimezone=UTC
-    username: root
-    password: 123456
+    driver-class-name: org.sqlite.JDBC
+    url: jdbc:sqlite:${SQLITE_DB_PATH:./data/inquisition.db}
+    username:
+    password:
     type: com.alibaba.druid.pool.DruidDataSource
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema-sqlite.sql
   mail:
     enable: false # 启用邮件发送
     host: smtp.qq.com # 邮件服务器地址
@@ -29,7 +33,7 @@ spring:
 
 mybatis:
   table:
-    auto: update
+    auto: none
     #create	    系统启动后，会将所有的表删除掉，然后根据model中配置的结构重新建表，该操作会破坏原有数据。
     #update	    系统会自动判断哪些表是新建的，哪些字段要修改类型等，哪些字段要删除，哪些字段要新增，该操作不会破坏原有数据。
     #none 		系统不做任何处理。
@@ -37,10 +41,9 @@ mybatis:
   model:
     pack: moe.dazecake.inquisition.model.entity
   database:
-    type: mysql
+    type: sqlite
 
 mybatis-plus:
-  mapper-locations: classpath*:com/gitee/sunchenbin/mybatis/actable/mapping/*/*.xml
   configuration:
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 #    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl

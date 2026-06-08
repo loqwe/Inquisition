@@ -26,6 +26,7 @@ dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.24'
     developmentOnly 'org.springframework.boot:spring-boot-devtools:2.7.0'
     runtimeOnly 'mysql:mysql-connector-java:8.0.29'
+    runtimeOnly 'org.xerial:sqlite-jdbc:3.45.3.0'
     annotationProcessor 'org.projectlombok:lombok:1.18.24'
     testImplementation 'org.springframework.boot:spring-boot-starter-test:2.7.0'
     implementation 'com.baomidou:mybatis-plus-boot-starter:3.5.2'
@@ -42,4 +43,8 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.10.0'
     implementation 'org.mapstruct:mapstruct:1.5.3.Final'
     annotationProcessor 'org.mapstruct:mapstruct-processor:1.5.3.Final'
+}
+
+test {
+    useJUnitPlatform()
 }

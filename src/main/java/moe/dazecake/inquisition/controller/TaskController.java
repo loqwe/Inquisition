@@ -10,13 +10,13 @@ import moe.dazecake.inquisition.model.dto.account.AccountIDDTO;
 import moe.dazecake.inquisition.model.dto.device.DeviceTokenDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.TaskDateSet.LockTask;
+import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.service.impl.TaskServiceImpl;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -82,9 +82,8 @@ public class TaskController {
     @Login
     @Operation(summary = "查询已冻结任务列表")
     @GetMapping("/showFreezeTaskList")
-    public Result<HashMap<Long, LocalDateTime>> showFreezeTaskList() {
-        taskService.restoreExpiredCooldownTasks();
-        return Result.success(dynamicInfo.getFreezeUserInfoMap(), "查询成功");
+    public Result<HashMap<Long, AccountCooldownVO>> showFreezeTaskList() {
+        return Result.success(taskService.getActiveCooldownTaskInfoMap(), "查询成功");
     }
 
     @Login

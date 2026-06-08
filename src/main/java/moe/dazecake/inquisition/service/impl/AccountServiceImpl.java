@@ -104,11 +104,10 @@ public class AccountServiceImpl implements AccountService {
 
     @Override
     public void deleteAccount(Long id) {
-        var account = accountMapper.selectById(id);
-
-        if (account != null) {
-            account.setDelete(1);
-            accountMapper.updateById(account);
+        if (id != null) {
+            taskService.forceHaltTask(id);
+            dynamicInfo.getUserSanInfoMap().remove(id);
+            accountMapper.hardDeleteById(id);
         }
     }
 
@@ -150,22 +149,51 @@ public class AccountServiceImpl implements AccountService {
 
     @Override
     public PageQueryVO<AccountWithSanVO> queryAccount(Long current, Long size, String keyword) {
-        var data = accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
-                .eq(AccountEntity::getDelete, 0)
-                .eq(AccountEntity::getId, keyword));
-
-        if (data.getRecords().size() == 0) {
-            data = accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
-                    .eq(AccountEntity::getDelete, 0)
-                    .like(AccountEntity::getAccount, keyword));
+        var normalizedKeyword = keyword == null ? "" : keyword.trim();
+        if (normalizedKeyword.isBlank()) {
+            return queryAllAccount(current, size, null, null, null, null);
         }
+
+        var data = queryExactAccountPage(current, size, normalizedKeyword);
+
+        // Exact match wins. Only fall back to fuzzy matching when no exact id/account/name hit exists.
         if (data.getRecords().size() == 0) {
-            data = accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
-                    .eq(AccountEntity::getDelete, 0)
-                    .like(AccountEntity::getName, keyword));
+            data = queryFuzzyAccountPage(current, size, normalizedKeyword);
         }
 
         return getAccountWithSanVOPageQueryVO(data);
+    }
+
+    Page<AccountEntity> queryExactAccountPage(Long current, Long size, String normalizedKeyword) {
+        var parsedId = parseIdKeyword(normalizedKeyword);
+        return accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
+                .eq(AccountEntity::getDelete, 0)
+                .and(wrapper -> {
+                    if (parsedId != null) {
+                        wrapper.eq(AccountEntity::getId, parsedId).or();
+                    }
+                    wrapper.eq(AccountEntity::getAccount, normalizedKeyword)
+                            .or()
+                            .eq(AccountEntity::getName, normalizedKeyword);
+                })
+                .orderByAsc(AccountEntity::getId));
+    }
+
+    Page<AccountEntity> queryFuzzyAccountPage(Long current, Long size, String normalizedKeyword) {
+        return accountMapper.selectPage(new Page<>(current, size), Wrappers.<AccountEntity>lambdaQuery()
+                .eq(AccountEntity::getDelete, 0)
+                .and(wrapper -> wrapper.like(AccountEntity::getAccount, normalizedKeyword)
+                        .or()
+                        .like(AccountEntity::getName, normalizedKeyword))
+                .orderByAsc(AccountEntity::getId));
+    }
+
+    private Long parseIdKeyword(String keyword) {
+        try {
+            return Long.valueOf(keyword);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private Boolean parseBooleanFilter(String value) {

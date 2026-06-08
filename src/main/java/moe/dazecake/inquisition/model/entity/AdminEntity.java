@@ -48,5 +48,5 @@ public class AdminEntity {
     @Column(name = "delete", comment = "逻辑删除")
     @Schema(description = "逻辑删除")
     @TableField(value = "`delete`")
-    Integer delete;
+    Integer delete = 0;
 }

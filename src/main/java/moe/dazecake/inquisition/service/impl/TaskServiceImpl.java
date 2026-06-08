@@ -11,6 +11,7 @@ import moe.dazecake.inquisition.model.dto.log.AddLogDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.local.UserSan;
+import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.service.intf.TaskService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
@@ -24,6 +25,7 @@ import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Calendar;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
@@ -67,6 +69,55 @@ public class TaskServiceImpl implements TaskService {
         return dto;
     }
 
+    private boolean isDeleted(AccountEntity account) {
+        return account == null || Objects.equals(account.getDelete(), 1);
+    }
+
+    private String cooldownReasonMessage(String type) {
+        if (type == null || type.isBlank()) {
+            return "未知异常，临时冷却后自动重试";
+        }
+        switch (type) {
+            case "lineBusy":
+                return "线路繁忙或设备资源冲突，临时冷却后自动重试";
+            case "accountError":
+                return "账号登录异常，系统已复核账号状态";
+            case "biliLoginLimit":
+                return "B服近期登录设备较多，疑似触发登录限制";
+            case "manual":
+                return "管理员手动设置临时冷却";
+            default:
+                return "任务失败: " + type + "，临时冷却后自动重试";
+        }
+    }
+
+    private void addWaitTaskIfAbsent(Long id) {
+        synchronized (dynamicInfo.getWaitUserList()) {
+            if (!dynamicInfo.getWaitUserList().contains(id)) {
+                dynamicInfo.getWaitUserList().add(id);
+            }
+        }
+    }
+
+    private void putAccountOnCooldown(AccountEntity account, String deviceToken, String reason,
+                                      LocalDateTime cooldownUntil, boolean requeue, boolean notifyAdmin) {
+        dynamicInfo.getFreezeUserInfoMap().put(account.getId(), cooldownUntil);
+        dynamicInfo.getCooldownReasonMap().put(account.getId(), reason);
+        if (requeue) {
+            addWaitTaskIfAbsent(account.getId());
+        }
+
+        var untilText = cooldownUntil.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        var message = "账号 " + account.getName() + "(" + account.getAccount() + ") 已进入临时冷却；原因: "
+                + reason + " / " + cooldownReasonMessage(reason) + "；冷却至: " + untilText
+                + "；冷却期间调度器会跳过该账号，到期后自动回到队列。";
+        log(deviceToken == null ? "SYSTEM" : deviceToken, account, "WARN", "账号临时冷却", message, null);
+        logService.logWarn("[审判庭] 账号临时冷却", message);
+        if (notifyAdmin) {
+            messageService.pushAdmin("[审判庭] 账号临时冷却", message);
+        }
+    }
+
 
     @Override
     public Result<AccountDTO> getTask(String deviceToken) {
@@ -102,9 +153,14 @@ public class TaskServiceImpl implements TaskService {
                 account = accountMapper.selectById(iterator.next());
 
                 //删除检查
-                if (account.getDelete() == 1 || account.getExpireTime().isBefore(LocalDateTime.now())) {
+                if (account == null) {
+                    iterator.remove();
+                    continue;
+                }
+                if (isDeleted(account) || account.getExpireTime().isBefore(LocalDateTime.now())) {
                     dynamicInfo.getUserSanInfoMap().remove(account.getId());
                     dynamicInfo.getFreezeUserInfoMap().remove(account.getId());
+                    dynamicInfo.getCooldownReasonMap().remove(account.getId());
                     iterator.remove();
                     continue;
                 }
@@ -514,6 +570,7 @@ public class TaskServiceImpl implements TaskService {
             //检测是否结束冻结
             if (dynamicInfo.getFreezeUserInfoMap().get(account.getId()).isBefore(LocalDateTime.now())) {
                 dynamicInfo.getFreezeUserInfoMap().remove(account.getId());
+                dynamicInfo.getCooldownReasonMap().remove(account.getId());
                 //解冻，不在冻结状态
                 return false;
             }
@@ -545,8 +602,9 @@ public class TaskServiceImpl implements TaskService {
                     continue;
                 }
                 dynamicInfo.getFreezeUserInfoMap().remove(id);
+                dynamicInfo.getCooldownReasonMap().remove(id);
             }
-            if (account == null || account.getDelete() == 1 || account.getFreeze() == 1 || account.getExpireTime().isBefore(now)) {
+            if (isDeleted(account) || account.getFreeze() == 1 || account.getExpireTime().isBefore(now)) {
                 continue;
             }
             if (dynamicInfo.getWorkUserList().contains(id)) {
@@ -577,12 +635,34 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
+    public HashMap<Long, AccountCooldownVO> getActiveCooldownTaskInfoMap() {
+        restoreExpiredCooldownTasks();
+        var result = new HashMap<Long, AccountCooldownVO>();
+        getActiveCooldownTaskMap().forEach((id, freezeUntil) -> {
+            var account = accountMapper.selectById(id);
+            if (isDeleted(account)) {
+                return;
+            }
+            var reason = dynamicInfo.getCooldownReasonMap().getOrDefault(id, "unknown");
+            result.put(id, new AccountCooldownVO(
+                    id,
+                    account.getName(),
+                    account.getAccount(),
+                    freezeUntil,
+                    reason,
+                    cooldownReasonMessage(reason)
+            ));
+        });
+        return result;
+    }
+
+    @Override
     public Result<String> showAccountCooldown(Long id) {
         if (id == null) {
             return Result.paramError("账号不能为空");
         }
         var account = accountMapper.selectById(id);
-        if (account == null || account.getDelete() == 1) {
+        if (isDeleted(account)) {
             return Result.notFound("账号不存在");
         }
         var freezeUntil = dynamicInfo.getFreezeUserInfoMap().get(id);
@@ -599,7 +679,7 @@ public class TaskServiceImpl implements TaskService {
             return Result.paramError("账号不能为空");
         }
         var account = accountMapper.selectById(id);
-        if (account == null || account.getDelete() == 1) {
+        if (isDeleted(account)) {
             return Result.notFound("账号不存在");
         }
         if (freezeUntil == null || freezeUntil.isBlank()) {
@@ -615,7 +695,7 @@ public class TaskServiceImpl implements TaskService {
             return Result.paramError("冷却时间必须晚于当前时间");
         }
         forceHaltTask(id);
-        dynamicInfo.getFreezeUserInfoMap().put(id, parsedFreezeUntil);
+        putAccountOnCooldown(account, "SYSTEM", "manual", parsedFreezeUntil, false, true);
         return Result.success("设置成功");
     }
 
@@ -625,10 +705,11 @@ public class TaskServiceImpl implements TaskService {
             return Result.paramError("账号不能为空");
         }
         var account = accountMapper.selectById(id);
-        if (account == null || account.getDelete() == 1) {
+        if (isDeleted(account)) {
             return Result.notFound("账号不存在");
         }
         dynamicInfo.getFreezeUserInfoMap().remove(id);
+        dynamicInfo.getCooldownReasonMap().remove(id);
         return Result.success("清除成功");
     }
 
@@ -675,37 +756,41 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public void errorHandle(AccountEntity account, String deviceToken, String type) {
 
-        switch (type) {
+        var errorType = type == null ? "unknown" : type;
+        switch (errorType) {
             case ("lineBusy"): {
-                dynamicInfo.getFreezeUserInfoMap().put(account.getId(), LocalDateTime.now().plusHours(1));
-                dynamicInfo.getWaitUserList().add(account.getId());
+                putAccountOnCooldown(account, deviceToken, "lineBusy", LocalDateTime.now().plusHours(1), true, true);
                 break;
             }
             case ("accountError"): {
                 if (account.getServer() == 0) {
                     if (httpService.isOfficialAccountWork(account.getAccount(), account.getPassword())) {
-                        dynamicInfo.getFreezeUserInfoMap().put(account.getId(), LocalDateTime.now().plusHours(1));
-                        dynamicInfo.getWaitUserList().add(account.getId());
+                        putAccountOnCooldown(account, deviceToken, "accountError", LocalDateTime.now().plusHours(1), true, true);
                     } else {
                         account.setFreeze(1);
                         accountMapper.updateById(account);
                         dynamicInfo.getUserSanInfoMap().remove(account.getId());
+                        logService.logWarn("[审判庭] 账号异常", "账号 " + account.getName() + "(" + account.getAccount() + ") 密码校验失败，已冻结账号。");
+                        messageService.pushAdmin("[审判庭] 账号异常", "账号 " + account.getName() + "(" + account.getAccount() + ") 密码校验失败，已冻结账号。");
                         messageService.push(account, "账号异常", "您的账号密码有误，请在面板更新正确的账号密码，否则托管将无法继续进行");
                     }
                 } else if (account.getServer() == 1) {
                     if (httpService.isBiliAccountWork(account.getAccount(), account.getPassword())) {
+                        putAccountOnCooldown(account, deviceToken, "biliLoginLimit", LocalDateTime.now().plusHours(1), true, true);
                         messageService.push(account, "账号异常", "您近期登陆的设备较多，已被B服限制登陆，请立即修改密码并于面板更新密码,否则托管可能将无法继续进行");
                     } else {
                         account.setFreeze(1);
                         accountMapper.updateById(account);
                         dynamicInfo.getUserSanInfoMap().remove(account.getId());
+                        logService.logWarn("[审判庭] 账号异常", "账号 " + account.getName() + "(" + account.getAccount() + ") 密码校验失败，已冻结账号。");
+                        messageService.pushAdmin("[审判庭] 账号异常", "账号 " + account.getName() + "(" + account.getAccount() + ") 密码校验失败，已冻结账号。");
                         messageService.push(account, "账号异常", "您的账号密码有误，请在面板更新正确的账号密码，否则托管将无法继续进行");
                     }
                 }
+                break;
             }
             default: {
-                dynamicInfo.getFreezeUserInfoMap().put(account.getId(), LocalDateTime.now().plusMinutes(10));
-                dynamicInfo.getWaitUserList().add(account.getId());
+                putAccountOnCooldown(account, deviceToken, errorType, LocalDateTime.now().plusMinutes(10), true, true);
                 break;
             }
         }
@@ -737,6 +822,7 @@ public class TaskServiceImpl implements TaskService {
             }
         }
         dynamicInfo.getFreezeUserInfoMap().remove(id);
+        dynamicInfo.getCooldownReasonMap().remove(id);
     }
 
     @Override
@@ -757,7 +843,7 @@ public class TaskServiceImpl implements TaskService {
             }
 
             //检查是否已删除
-            if (account.getDelete() == 1) {
+            if (isDeleted(account)) {
                 entryIterator.remove();
                 continue;
             }

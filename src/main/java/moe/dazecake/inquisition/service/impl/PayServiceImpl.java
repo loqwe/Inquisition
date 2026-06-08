@@ -163,10 +163,7 @@ public class PayServiceImpl implements PayService {
                     newUser.setAgent(Long.valueOf(bill.getParam().split("\\|")[4]));
                     newUser.setExpireTime(LocalDateTime.now().plusDays(3));
                     accountMapper.insert(newUser);
-                    var userId = accountMapper.selectOne(
-                            Wrappers.<AccountEntity>lambdaQuery()
-                                    .eq(AccountEntity::getAccount, newUser.getAccount())).getId();
-                    accountService.forceFightAccount(userId, true);
+                    accountService.forceFightAccount(newUser.getId(), true);
                     //代理佣金
                     if (newUser.getAgent() != 0) {
                         calculateCommission(newUser.getAgent(), 1.0);

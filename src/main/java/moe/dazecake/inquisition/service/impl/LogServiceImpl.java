@@ -85,11 +85,20 @@ public class LogServiceImpl implements LogService {
 
     @Override
     public void specialScan(AddLogDTO addLogDTO) {
-        if (addLogDTO.getDetail().contains("高级资深干员")) {
+        if (addLogDTO.getDetail() != null && addLogDTO.getDetail().contains("高级资深干员")) {
             try {
-                var luckyDog = accountMapper.selectOne(Wrappers.<AccountEntity>lambdaQuery()
-                        .eq(AccountEntity::getAccount, addLogDTO.getAccount()));
-                messageService.push(luckyDog, "高级资深干员提示", "恭喜你获得了高级资深干员！快上游戏看看吧！");
+                var luckyDogs = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
+                        .eq(AccountEntity::getAccount, addLogDTO.getAccount())
+                        .eq(AccountEntity::getDelete, 0)
+                        .orderByDesc(AccountEntity::getId)
+                        .last("LIMIT 2"));
+                if (luckyDogs.size() == 1) {
+                    messageService.push(luckyDogs.get(0), "高级资深干员提示", "恭喜你获得了高级资深干员！快上游戏看看吧！");
+                } else if (luckyDogs.size() > 1) {
+                    var detail = "账号 " + addLogDTO.getAccount() + " 存在多个未删除记录，高级资深干员通知已跳过，请先处理重复账号。";
+                    logWarn("[审判庭] 重复账号异常", detail);
+                    messageService.pushAdmin("[审判庭] 重复账号异常", detail);
+                }
             } catch (Exception e) {
                 e.printStackTrace();
             }

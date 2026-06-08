@@ -141,6 +141,7 @@ public class ProUserServiceImpl implements ProUserService {
         var wrapper = Wrappers.<AccountEntity>lambdaQuery().eq(AccountEntity::getAgent, id);
         switch (type) {
             case "all":
+                wrapper.eq(AccountEntity::getDelete, 0);
                 break;
             case "active":
                 wrapper.gt(AccountEntity::getExpireTime, LocalDateTime.now())
@@ -171,6 +172,7 @@ public class ProUserServiceImpl implements ProUserService {
                 Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getAgent, id)
                         .eq(AccountEntity::getAccount, keyword)
+                        .eq(AccountEntity::getDelete, 0)
         );
         return Result.success(accountService.getAccountWithSanVOPageQueryVO(data), "查询成功");
     }
@@ -314,7 +316,9 @@ public class ProUserServiceImpl implements ProUserService {
         }
 
         //检查重复用户
-        if (accountMapper.selectOne(Wrappers.<AccountEntity>lambdaQuery().eq(AccountEntity::getAccount, account)) != null) {
+        if (accountMapper.selectOne(Wrappers.<AccountEntity>lambdaQuery()
+                .eq(AccountEntity::getAccount, account)
+                .eq(AccountEntity::getDelete, 0)) != null) {
             return Result.forbidden("该账号已存在，不允许重复创建");
         }
 
@@ -331,7 +335,9 @@ public class ProUserServiceImpl implements ProUserService {
         addAccountDTO.setExpireTime(LocalDateTime.now().plusDays(days));
         addAccountDTO.setAgent(id);
         accountService.addAccount(addAccountDTO);
-        var userId = accountMapper.selectOne(Wrappers.<AccountEntity>lambdaQuery().eq(AccountEntity::getAccount, account)).getId();
+        var userId = accountMapper.selectOne(Wrappers.<AccountEntity>lambdaQuery()
+                .eq(AccountEntity::getAccount, account)
+                .eq(AccountEntity::getDelete, 0)).getId();
         accountService.forceFightAccount(userId, true);
         return Result.success("创建成功");
     }
@@ -403,8 +409,9 @@ public class ProUserServiceImpl implements ProUserService {
         } else {
             msg = "该用户已过期，无需回收。当前余额：" + proUser.getBalance();
         }
-        subUser.setDelete(1);
-        accountMapper.updateById(subUser);
+        taskService.forceHaltTask(subUser.getId());
+        dynamicInfo.getUserSanInfoMap().remove(subUser.getId());
+        accountMapper.hardDeleteById(subUser.getId());
         return Result.success(msg, "删除成功");
     }
 

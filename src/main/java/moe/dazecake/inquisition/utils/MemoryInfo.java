@@ -35,6 +35,7 @@ public class MemoryInfo {
     public HashMap<Long, UserSan> userSanInfoMap = new HashMap<>();
     public HashMap<Long, WorkUser> workUserInfoMap = new HashMap<>();
     public HashMap<Long, LocalDateTime> freezeUserInfoMap = new HashMap<>();
+    public HashMap<Long, String> cooldownReasonMap = new HashMap<>();
 
 
     //======================

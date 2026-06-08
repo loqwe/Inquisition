@@ -69,7 +69,8 @@ public class UserServiceImpl implements UserService {
     @Override
     public Result<String> createUserByCDK(String cdk, String username, String account, String password, Integer server) {
         if (accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
-                .eq(AccountEntity::getAccount, account)).size() != 0) {
+                .eq(AccountEntity::getAccount, account)
+                .eq(AccountEntity::getDelete, 0)).size() != 0) {
             return Result.forbidden("账号已存在，请直接登录");
         }
 
@@ -93,7 +94,8 @@ public class UserServiceImpl implements UserService {
         }
 
         if (accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
-                .eq(AccountEntity::getAccount, account)).size() != 0) {
+                .eq(AccountEntity::getAccount, account)
+                .eq(AccountEntity::getDelete, 0)).size() != 0) {
             return Result.forbidden("账号已存在，请直接登录");
         }
 
@@ -120,12 +122,10 @@ public class UserServiceImpl implements UserService {
                 Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getAccount, account)
                         .eq(AccountEntity::getPassword, password)
+                        .eq(AccountEntity::getDelete, 0)
         );
 
         if (user != null) {
-            if (user.getDelete() == 1) {
-                return Result.forbidden("账号已被删除，请联系管理员解除");
-            }
             return Result.success(new UserLoginVO(JWTUtils.generateTokenForUser(user)), "登录成功");
         } else {
             return Result.unauthorized("账号或密码错误");
@@ -173,8 +173,10 @@ public class UserServiceImpl implements UserService {
         var accountList = accountMapper.selectList(
                 Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getAccount, account)
+                        .eq(AccountEntity::getDelete, 0)
+                        .ne(AccountEntity::getId, id)
         );
-        if (accountList.size() > 1) {
+        if (accountList.size() > 0) {
             return Result.forbidden("此账号已经被使用");
         }
 
