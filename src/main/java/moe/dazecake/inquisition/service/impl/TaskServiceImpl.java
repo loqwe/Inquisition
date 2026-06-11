@@ -113,9 +113,7 @@ public class TaskServiceImpl implements TaskService {
                 + "；冷却期间调度器会跳过该账号，到期后自动回到队列。";
         log(deviceToken == null ? "SYSTEM" : deviceToken, account, "WARN", "账号临时冷却", message, null);
         logService.logWarn("[审判庭] 账号临时冷却", message);
-        if (notifyAdmin) {
-            messageService.pushAdmin("[审判庭] 账号临时冷却", message);
-        }
+        // 临时冷却只保留账号日志和系统日志，避免重复推送管理员通知。
     }
 
 
