@@ -7,6 +7,7 @@ import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 
 import java.util.HashMap;
+import java.util.Set;
 
 public interface AccountService {
     /**
@@ -44,7 +45,7 @@ public interface AccountService {
      * @author DazeCake
      * @date 2023/1/25 23:48
      */
-    void updateAccount(AccountDTO accountDTO);
+    void updateAccount(AccountDTO accountDTO, Set<String> presentFields);
 
     /**
      * 分页查询所有账号

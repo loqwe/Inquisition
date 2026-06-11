@@ -1,5 +1,7 @@
 package moe.dazecake.inquisition.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import moe.dazecake.inquisition.annotation.Login;
@@ -15,6 +17,7 @@ import moe.dazecake.inquisition.utils.Result;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import java.util.HashSet;
 import java.util.HashMap;
 
 @Tag(name = "账号接口")
@@ -24,6 +27,9 @@ public class AccountController {
 
     @Resource
     AccountServiceImpl accountService;
+
+    @Resource
+    ObjectMapper objectMapper;
 
     @Resource
     UserServiceImpl userService;
@@ -70,8 +76,13 @@ public class AccountController {
     @Login
     @Operation(summary = "更新账号")
     @PostMapping("/updateAccount")
-    public Result<String> updateAccount(@RequestBody AccountDTO accountDTO) {
-        accountService.updateAccount(accountDTO);
+    public Result<String> updateAccount(@RequestBody JsonNode accountJson) {
+        if (accountJson == null || !accountJson.isObject() || !accountJson.hasNonNull("id")) {
+            return Result.paramError("id不允许为空");
+        }
+        var presentFields = new HashSet<String>();
+        accountJson.fieldNames().forEachRemaining(presentFields::add);
+        accountService.updateAccount(objectMapper.convertValue(accountJson, AccountDTO.class), presentFields);
         return Result.success(null, "更新成功");
     }
 

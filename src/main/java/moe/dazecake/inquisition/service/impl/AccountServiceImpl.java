@@ -20,6 +20,7 @@ import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class AccountServiceImpl implements AccountService {
@@ -112,12 +113,64 @@ public class AccountServiceImpl implements AccountService {
     }
 
     @Override
-    public void updateAccount(AccountDTO accountDTO) {
+    public void updateAccount(AccountDTO accountDTO, Set<String> presentFields) {
         var account = accountMapper.selectById(accountDTO.getId());
 
         if (account != null) {
-            DailyPlanUtil.normalizeDailyPlan(accountDTO);
-            accountMapper.updateById(AccountConvert.INSTANCE.toAccountEntity(accountDTO));
+            mergeAccountUpdates(account, accountDTO, presentFields);
+            if (presentFields != null && presentFields.contains("config")) {
+                DailyPlanUtil.normalizeDailyPlan(account);
+            }
+            account.setUpdateTime(LocalDateTime.now());
+            accountMapper.updateById(account);
+        }
+    }
+
+    private void mergeAccountUpdates(AccountEntity account, AccountDTO accountDTO, Set<String> presentFields) {
+        if (presentFields == null) {
+            return;
+        }
+        if (presentFields.contains("name")) {
+            account.setName(accountDTO.getName());
+        }
+        if (presentFields.contains("account")) {
+            account.setAccount(accountDTO.getAccount());
+        }
+        if (presentFields.contains("password")) {
+            account.setPassword(accountDTO.getPassword());
+        }
+        if (presentFields.contains("freeze")) {
+            account.setFreeze(accountDTO.getFreeze());
+        }
+        if (presentFields.contains("server")) {
+            account.setServer(accountDTO.getServer());
+        }
+        if (presentFields.contains("taskType")) {
+            account.setTaskType(accountDTO.getTaskType());
+        }
+        if (presentFields.contains("config") && accountDTO.getConfig() != null) {
+            account.setConfig(accountDTO.getConfig());
+        }
+        if (presentFields.contains("active") && accountDTO.getActive() != null) {
+            account.setActive(accountDTO.getActive());
+        }
+        if (presentFields.contains("notice") && accountDTO.getNotice() != null) {
+            account.setNotice(accountDTO.getNotice());
+        }
+        if (presentFields.contains("bLimitDevice") && accountDTO.getBLimitDevice() != null) {
+            account.setBLimitDevice(accountDTO.getBLimitDevice());
+        }
+        if (presentFields.contains("refresh")) {
+            account.setRefresh(accountDTO.getRefresh());
+        }
+        if (presentFields.contains("agent")) {
+            account.setAgent(accountDTO.getAgent());
+        }
+        if (presentFields.contains("expireTime")) {
+            account.setExpireTime(accountDTO.getExpireTime());
+        }
+        if (presentFields.contains("delete")) {
+            account.setDelete(accountDTO.getDelete());
         }
     }
 

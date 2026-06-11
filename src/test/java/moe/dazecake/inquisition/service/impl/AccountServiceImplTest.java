@@ -2,14 +2,20 @@ package moe.dazecake.inquisition.service.impl;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import moe.dazecake.inquisition.mapper.AccountMapper;
+import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Fight;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -60,5 +66,35 @@ class AccountServiceImplTest {
         assertEquals("账号1", result.getRecords().get(0).getName());
         assertEquals("账号10", result.getRecords().get(1).getName());
         verify(service.accountMapper).searchActiveExactFirst(any(Page.class), eq("账号1"), isNull());
+    }
+
+    @Test
+    void updateAccountPartialPayloadDoesNotResetConfigDefaults() {
+        var service = new AccountServiceImpl();
+        service.accountMapper = mock(AccountMapper.class);
+
+        var customConfig = new ConfigEntity();
+        customConfig.getDaily().setMail(false);
+        customConfig.getDaily().setFight(List.of(new Fight("custom-stage", 3)));
+
+        var existing = new AccountEntity()
+                .setId(1L)
+                .setName("账号1")
+                .setFreeze(1)
+                .setConfig(customConfig);
+        when(service.accountMapper.selectById(1L)).thenReturn(existing);
+
+        var partialUpdate = new AccountDTO();
+        partialUpdate.setId(1L);
+        partialUpdate.setFreeze(0);
+
+        service.updateAccount(partialUpdate, Set.of("id", "freeze"));
+
+        var captor = ArgumentCaptor.forClass(AccountEntity.class);
+        verify(service.accountMapper).updateById(captor.capture());
+        assertEquals(0, captor.getValue().getFreeze());
+        assertSame(customConfig, captor.getValue().getConfig());
+        assertFalse(captor.getValue().getConfig().getDaily().isMail());
+        assertEquals("custom-stage", captor.getValue().getConfig().getDaily().getFight().get(0).getLevel());
     }
 }
