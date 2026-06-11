@@ -13,6 +13,9 @@ public interface AccountMapper extends BaseMapper<AccountEntity> {
     @Delete("DELETE FROM account WHERE id = #{id}")
     int hardDeleteById(@Param("id") Long id);
 
+    @Select("SELECT CAST(config AS CHAR) FROM account WHERE id = #{id}")
+    String selectConfigJsonById(@Param("id") Long id);
+
     @Select({
             "<script>",
             "<bind name=\"likeKeyword\" value=\"'%' + keyword + '%'\" />",

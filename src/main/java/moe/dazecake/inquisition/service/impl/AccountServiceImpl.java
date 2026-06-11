@@ -2,12 +2,14 @@ package moe.dazecake.inquisition.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.google.gson.Gson;
 import moe.dazecake.inquisition.constant.enums.TaskType;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.mapper.mapstruct.AccountConvert;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.account.AddAccountDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
 import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.AccountService;
@@ -24,6 +26,8 @@ import java.util.Set;
 
 @Service
 public class AccountServiceImpl implements AccountService {
+
+    private final Gson gson = new Gson();
 
     @Resource
     DynamicInfo dynamicInfo;
@@ -365,6 +369,7 @@ public class AccountServiceImpl implements AccountService {
         result.setTotal(data.getTotal());
 
         for (AccountEntity user : data.getRecords()) {
+            hydrateConfigFromRawJson(user);
             if (dynamicInfo.getUserSanInfoMap().containsKey(user.getId())) {
                 result.getRecords().add(AccountConvert.INSTANCE.toAccountWithSanVO(
                         user,
@@ -375,6 +380,21 @@ public class AccountServiceImpl implements AccountService {
             }
         }
         return result;
+    }
+
+    private void hydrateConfigFromRawJson(AccountEntity user) {
+        if (user == null || user.getId() == null) {
+            return;
+        }
+        var configJson = accountMapper.selectConfigJsonById(user.getId());
+        if (configJson == null || configJson.isBlank()) {
+            return;
+        }
+        var config = gson.fromJson(configJson, ConfigEntity.class);
+        if (config != null) {
+            user.setConfig(config);
+            DailyPlanUtil.normalizeDailyPlan(user);
+        }
     }
 
 

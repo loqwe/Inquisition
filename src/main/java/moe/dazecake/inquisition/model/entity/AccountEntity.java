@@ -18,6 +18,7 @@ import lombok.experimental.Accessors;
 import moe.dazecake.inquisition.model.entity.ActivationDateSet.ActivationDate;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
 import moe.dazecake.inquisition.model.entity.NoticeEntitySet.NoticeEntity;
+import moe.dazecake.inquisition.utils.ConfigEntityTypeHandler;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -64,7 +65,7 @@ public class AccountEntity {
 
     @Column(name = "config", comment = "配置", type = MySqlTypeConstant.JSON)
     @Schema(description = "配置")
-    @TableField(typeHandler = GsonTypeHandler.class)
+    @TableField(typeHandler = ConfigEntityTypeHandler.class)
     ConfigEntity config = new ConfigEntity();
 
     @Column(name = "active", comment = "激活时间", type = MySqlTypeConstant.JSON)
