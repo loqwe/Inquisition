@@ -21,7 +21,7 @@ def digest_file(path: Path) -> dict[str, object]:
 
 
 def _validate_member(name: str) -> PurePosixPath:
-    member = PurePosixPath(name)
+    member = PurePosixPath(name.replace("\\", "/"))
     if member.is_absolute() or ".." in member.parts:
         raise ValueError(f"unsafe archive member: {name}")
     return member

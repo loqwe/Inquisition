@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from tools.cloud_lua_reverse.artifact import build_manifest, extract_member
 
@@ -28,6 +29,16 @@ class ArtifactTest(unittest.TestCase):
                 package.writestr("../escape.lua", b"bad")
             with self.assertRaises(ValueError):
                 extract_member(archive, "../escape.lua", root / "out")
+
+    def test_extract_member_rejects_windows_path_traversal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "script.lr"
+            with mock.patch.object(zipfile, "_sanitize_filename", side_effect=lambda name: name):
+                with zipfile.ZipFile(archive, "w") as package:
+                    package.writestr("..\\escape.lua", b"bad")
+                with self.assertRaises(ValueError):
+                    extract_member(archive, "..\\escape.lua", root / "out")
 
 
 if __name__ == "__main__":
