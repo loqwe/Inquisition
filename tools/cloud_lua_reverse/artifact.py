@@ -28,8 +28,12 @@ def _validate_member(name: str) -> PurePosixPath:
     return member
 
 
+def _open_archive(path: Path) -> zipfile.ZipFile:
+    return zipfile.ZipFile(path, metadata_encoding="utf-8")
+
+
 def build_manifest(path: Path) -> dict[str, object]:
-    with zipfile.ZipFile(path) as package:
+    with _open_archive(path) as package:
         entries = []
         for info in sorted(package.infolist(), key=lambda item: item.filename):
             _validate_member(info.filename)
@@ -47,7 +51,7 @@ def extract_member(path: Path, name: str, output_dir: Path) -> Path:
     member = _validate_member(name)
     target = output_dir.joinpath(*member.parts)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(path) as package:
+    with _open_archive(path) as package:
         info = package.getinfo(name)
         _validate_member(info.filename)
         with package.open(info) as source, target.open("wb") as destination:
