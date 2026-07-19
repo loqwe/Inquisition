@@ -1,0 +1,16 @@
+{
+  "/heartBeat": false,
+  "/getTask": false,
+  "/addLog": false,
+  "/uploadImage": false,
+  "/completeTask": false,
+  "/failTask": false,
+  "/sanReport": false,
+  "/haltComplete": false,
+  "deviceToken": false,
+  "assignmentId": false,
+  "clientVersion": false,
+  "accountId": false,
+  "imageUrl": false,
+  "taskType": false
+}
