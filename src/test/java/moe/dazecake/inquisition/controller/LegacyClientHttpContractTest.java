@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -38,6 +39,8 @@ class LegacyClientHttpContractTest {
 
         var captor = ArgumentCaptor.forClass(HeartBeatDTO.class);
         verify(service).postHeartBeat(captor.capture());
+        assertEquals(1001, captor.getValue().getStatus());
+        assertEquals("device-1", captor.getValue().getDeviceToken());
         assertNull(captor.getValue().getAssignmentId());
         assertNull(captor.getValue().getClientVersion());
     }
@@ -74,6 +77,10 @@ class LegacyClientHttpContractTest {
 
         var captor = ArgumentCaptor.forClass(AddLogDTO.class);
         verify(service).addLog(captor.capture(), eq(false));
+        assertEquals("INFO", captor.getValue().getLevel());
+        assertEquals("登录成功", captor.getValue().getTitle());
+        assertEquals("device-1", captor.getValue().getFrom());
+        assertEquals("legacy", captor.getValue().getAccount());
         assertNull(captor.getValue().getAssignmentId());
         assertNull(captor.getValue().getAccountId());
     }
