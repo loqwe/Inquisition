@@ -1,0 +1,415 @@
+{
+  "artifact": {
+    "size": 1712597,
+    "md5": "de760ee66209882f057c6f1f77ed35db",
+    "sha256": "921117c26d2eebabf7d080c654112c16f4de2294f177f46ae94ecb640637b655"
+  },
+  "entries": [
+    {
+      "name": "entry.json",
+      "size": 137,
+      "compressedSize": 114,
+      "crc32": "09501b1c",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "插件/PaddLeOCRPluGin.lua",
+      "size": 4103,
+      "compressedSize": 3569,
+      "crc32": "755b79e3",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "插件/TURING.lua",
+      "size": 233200,
+      "compressedSize": 162726,
+      "crc32": "3431f00b",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "插件/armeabi-v7a/",
+      "size": 0,
+      "compressedSize": 2,
+      "crc32": "00000000",
+      "timestamp": [
+        2024,
+        7,
+        27,
+        15,
+        59,
+        54
+      ]
+    },
+    {
+      "name": "插件/x86/",
+      "size": 0,
+      "compressedSize": 2,
+      "crc32": "00000000",
+      "timestamp": [
+        2024,
+        7,
+        27,
+        15,
+        59,
+        54
+      ]
+    },
+    {
+      "name": "界面/main.ui",
+      "size": 1096,
+      "compressedSize": 451,
+      "crc32": "f66f92b9",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/cloud.lua",
+      "size": 26403,
+      "compressedSize": 21100,
+      "crc32": "6065ef70",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/exOcr.lua",
+      "size": 7864,
+      "compressedSize": 6625,
+      "crc32": "66ebf347",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/func.lua",
+      "size": 55028,
+      "compressedSize": 43795,
+      "crc32": "03a28d58",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/icebreaker.lua",
+      "size": 35679,
+      "compressedSize": 28091,
+      "crc32": "4760c6f2",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/interface.lua",
+      "size": 75403,
+      "compressedSize": 60177,
+      "crc32": "6a6d92cf",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/main.lua",
+      "size": 9818,
+      "compressedSize": 8040,
+      "crc32": "4088f0ee",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/mizuki.lua",
+      "size": 76781,
+      "compressedSize": 58025,
+      "crc32": "60c839d9",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/path.lua",
+      "size": 419184,
+      "compressedSize": 310200,
+      "crc32": "2311f60f",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/point.lua",
+      "size": 260627,
+      "compressedSize": 173368,
+      "crc32": "7903ea27",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/prts.lua",
+      "size": 80214,
+      "compressedSize": 62535,
+      "crc32": "1a10c8f7",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/raise.lua",
+      "size": 110193,
+      "compressedSize": 77682,
+      "crc32": "df001411",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/roguelike.lua",
+      "size": 69229,
+      "compressedSize": 53427,
+      "crc32": "738c494e",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/sami.lua",
+      "size": 19427,
+      "compressedSize": 15141,
+      "crc32": "92ae6a4f",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/sand.lua",
+      "size": 75219,
+      "compressedSize": 54324,
+      "crc32": "0398c651",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/sarkaz.lua",
+      "size": 83141,
+      "compressedSize": 59974,
+      "crc32": "e3176c1a",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/sha2.lua",
+      "size": 304985,
+      "compressedSize": 190140,
+      "crc32": "87577915",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/skill.lua",
+      "size": 88975,
+      "compressedSize": 65166,
+      "crc32": "7672a6d0",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/skland.lua",
+      "size": 15780,
+      "compressedSize": 12784,
+      "crc32": "84951447",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/sui.lua",
+      "size": 64079,
+      "compressedSize": 48424,
+      "crc32": "7ce3bb6d",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/tag.lua",
+      "size": 8336,
+      "compressedSize": 6527,
+      "crc32": "b8f10b25",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/turing.lua",
+      "size": 7823,
+      "compressedSize": 6126,
+      "crc32": "34b72a96",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "脚本/util.lua",
+      "size": 177626,
+      "compressedSize": 131250,
+      "crc32": "f2794564",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    },
+    {
+      "name": "资源/main.rc",
+      "size": 656149,
+      "compressedSize": 49650,
+      "crc32": "de0f41d3",
+      "timestamp": [
+        2026,
+        7,
+        5,
+        23,
+        17,
+        28
+      ]
+    }
+  ]
+}
