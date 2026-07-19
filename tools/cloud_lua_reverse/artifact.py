@@ -5,7 +5,7 @@ import hashlib
 import json
 import shutil
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 def digest_file(path: Path) -> dict[str, object]:
@@ -22,7 +22,8 @@ def digest_file(path: Path) -> dict[str, object]:
 
 def _validate_member(name: str) -> PurePosixPath:
     member = PurePosixPath(name.replace("\\", "/"))
-    if member.is_absolute() or ".." in member.parts:
+    windows_member = PureWindowsPath(name)
+    if member.is_absolute() or ".." in member.parts or windows_member.anchor:
         raise ValueError(f"unsafe archive member: {name}")
     return member
 
