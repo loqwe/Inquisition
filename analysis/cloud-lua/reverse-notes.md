@@ -188,3 +188,7 @@ No local decoder was identified; compiled internals remain Unresolved.
 - **Unresolved**：生产包是否仍使用每个端点、生产内部字段映射、业务码分支、编译/编码算法、密钥和指令语义。没有猜测这些内容。
 
 生产脚本内部语义与后端兼容性是两条独立证据链：服务端可通过契约测试发送上表的历史最小请求，验证旧请求在缺少 `assignmentId`、`clientVersion` 和独立 `accountId` 时仍被正确处理；这类测试只能确认后端兼容行为，不能把生产 x86LUA 的内部实现提升为 Confirmed static 或 Confirmed runtime。
+
+## Residual risk
+
+An old client does not return an assignment generation identifier. The backend therefore cannot prove task generation in every same-device race. Safety is provided by one active lease per device, hard lease expiry, halt-before-reassignment, and rejection of explicit mismatches. Strict cross-generation proof remains an optional future client enhancement, not a deployment prerequisite.
