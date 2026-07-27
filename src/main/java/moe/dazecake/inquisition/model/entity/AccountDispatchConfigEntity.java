@@ -20,7 +20,9 @@ public class AccountDispatchConfigEntity {
     @TableId(type = IdType.INPUT)
     private Long accountId;
     private String dispatchMode = "AUTO";
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private LocalTime scheduleTime;
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private LocalDateTime nextScheduledAt;
     private Integer activationPending = 0;
     @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)

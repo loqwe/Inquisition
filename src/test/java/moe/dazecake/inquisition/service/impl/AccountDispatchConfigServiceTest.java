@@ -1,5 +1,7 @@
 package moe.dazecake.inquisition.service.impl;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
 import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
@@ -20,6 +22,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -56,6 +59,15 @@ class AccountDispatchConfigServiceTest {
         assertEquals(Set.of("dispatchMode", "scheduleTime"), fields);
         assertEquals(AccountDispatchConfigService.SCHEDULED, request.getDispatchMode());
         assertEquals(LocalTime.of(19, 30), request.getScheduleTime());
+    }
+
+    @Test
+    void nullableScheduleFieldsAreAlwaysUpdatedWhileAuditFieldsRemainDatabaseManaged()
+            throws Exception {
+        assertUpdateStrategy("scheduleTime", FieldStrategy.IGNORED);
+        assertUpdateStrategy("nextScheduledAt", FieldStrategy.IGNORED);
+        assertAuditStrategies("createdAt");
+        assertAuditStrategies("updatedAt");
     }
 
     @Test
@@ -239,6 +251,21 @@ class AccountDispatchConfigServiceTest {
         request.setDispatchMode(mode);
         request.setScheduleTime(time);
         return request;
+    }
+
+    private void assertUpdateStrategy(String fieldName, FieldStrategy expected) throws Exception {
+        var field = AccountDispatchConfigEntity.class.getDeclaredField(fieldName);
+        var tableField = field.getAnnotation(TableField.class);
+        assertNotNull(tableField, fieldName + " must declare an explicit update strategy");
+        assertEquals(expected, tableField.updateStrategy());
+    }
+
+    private void assertAuditStrategies(String fieldName) throws Exception {
+        var field = AccountDispatchConfigEntity.class.getDeclaredField(fieldName);
+        var tableField = field.getAnnotation(TableField.class);
+        assertNotNull(tableField, fieldName + " must remain database managed");
+        assertEquals(FieldStrategy.NEVER, tableField.insertStrategy());
+        assertEquals(FieldStrategy.NEVER, tableField.updateStrategy());
     }
 
     private AccountEntity accountWithActiveMonday() {
