@@ -10,6 +10,7 @@ import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 
 @Mapper
 public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchConfigEntity> {
@@ -34,6 +35,39 @@ public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchC
             "FOR UPDATE"
     })
     AccountDispatchConfigEntity selectByIdForUpdate(@Param("accountId") Long accountId);
+
+    @Select({
+            "SELECT account_id, dispatch_mode, schedule_time, next_scheduled_at,",
+            "activation_pending, created_at, updated_at",
+            "FROM account_dispatch_config",
+            "WHERE dispatch_mode = 'SCHEDULED'",
+            "AND next_scheduled_at <= #{now}",
+            "ORDER BY next_scheduled_at, account_id"
+    })
+    List<AccountDispatchConfigEntity> selectDue(@Param("now") LocalDateTime now);
+
+    @Update({
+            "UPDATE account_dispatch_config",
+            "SET next_scheduled_at = NULL",
+            "WHERE account_id = #{accountId}",
+            "AND dispatch_mode = 'SCHEDULED'",
+            "AND activation_pending = 0",
+            "AND next_scheduled_at = #{expectedScheduledAt}"
+    })
+    int clearDue(@Param("accountId") Long accountId,
+                 @Param("expectedScheduledAt") LocalDateTime expectedScheduledAt);
+
+    @Update({
+            "UPDATE account_dispatch_config",
+            "SET next_scheduled_at = #{nextScheduledAt}",
+            "WHERE account_id = #{accountId}",
+            "AND dispatch_mode = 'SCHEDULED'",
+            "AND activation_pending = 0",
+            "AND next_scheduled_at = #{expectedScheduledAt}"
+    })
+    int advanceDue(@Param("accountId") Long accountId,
+                   @Param("expectedScheduledAt") LocalDateTime expectedScheduledAt,
+                   @Param("nextScheduledAt") LocalDateTime nextScheduledAt);
 
     @Update({
             "UPDATE account_dispatch_config",

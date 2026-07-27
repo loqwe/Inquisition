@@ -6,6 +6,7 @@ import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
+import moe.dazecake.inquisition.service.impl.AccountScheduledDispatchService;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -43,7 +45,7 @@ import moe.dazecake.inquisition.model.local.ScheduledTaskDefinition;
 class DynamicScheduleTaskTest {
 
     @Test
-    void registersAllFifteenCronTasksThroughTheMonitor() {
+    void registersAllSixteenCronTasksThroughTheMonitor() {
         var scheduler = new DynamicScheduleTask();
         scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
         var registrar = new ScheduledTaskRegistrar();
@@ -51,17 +53,65 @@ class DynamicScheduleTaskTest {
         scheduler.configureTasks(registrar);
 
         var definitionCaptor = ArgumentCaptor.forClass(ScheduledTaskDefinition.class);
-        verify(scheduler.scheduledTaskMonitor, times(15)).register(definitionCaptor.capture());
+        verify(scheduler.scheduledTaskMonitor, times(16)).register(definitionCaptor.capture());
         assertEquals(List.of(
                         "queue-maintenance", "sanity-refresh", "device-heartbeat-scan",
                         "assignment-timeout-scan", "account-expiry-reminder", "frozen-account-reminder",
                         "daily-refresh-reset", "missing-log-audit", "auto-device-management",
                         "admin-summary-dispatch", "abnormal-account-repair", "daily-login-sweep",
-                        "final-login-sweep", "final-login-summary", "urgent-login-cleanup"),
+                        "final-login-sweep", "final-login-summary", "urgent-login-cleanup",
+                        "account-scheduled-dispatch"),
                 definitionCaptor.getAllValues().stream()
                         .map(ScheduledTaskDefinition::getKey)
                         .collect(Collectors.toList()));
-        assertEquals(15, registrar.getTriggerTaskList().size());
+        assertEquals(16, registrar.getTriggerTaskList().size());
+    }
+
+    @Test
+    void accountScheduledDispatchUsesShanghaiOneMinuteCronAndIsDisabledByDefault() {
+        var scheduler = new DynamicScheduleTask();
+        scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
+        scheduler.accountScheduledDispatchService = mock(AccountScheduledDispatchService.class);
+        var registrar = new ScheduledTaskRegistrar();
+        scheduler.configureTasks(registrar);
+        var definitionCaptor = ArgumentCaptor.forClass(ScheduledTaskDefinition.class);
+        verify(scheduler.scheduledTaskMonitor, times(16)).register(definitionCaptor.capture());
+        var definition = definitionCaptor.getAllValues().get(15);
+        var lastRun = Date.from(Instant.parse("2026-07-27T04:00:00Z"));
+        var context = new SimpleTriggerContext(lastRun, lastRun, lastRun);
+
+        assertEquals(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK, definition.getKey());
+        assertEquals("0 */1 * * * *", definition.getCron());
+        assertEquals("Asia/Shanghai", definition.getTimeZone());
+        assertFalse(definition.isEnabled());
+        assertEquals(Instant.parse("2026-07-27T04:01:00Z"),
+                registrar.getTriggerTaskList().get(15).getTrigger().nextExecutionTime(context).toInstant());
+
+        registrar.getTriggerTaskList().get(15).getRunnable().run();
+        verify(scheduler.scheduledTaskMonitor, never()).execute(
+                eq(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK), eq("CRON"), any(Runnable.class));
+        verify(scheduler.accountScheduledDispatchService, never()).scan(any());
+    }
+
+    @Test
+    void enabledAccountScheduledDispatchRunsThroughTheMonitor() {
+        var scheduler = new DynamicScheduleTask();
+        scheduler.enableAccountSchedule = true;
+        scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
+        scheduler.accountScheduledDispatchService = mock(AccountScheduledDispatchService.class);
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(2)).run();
+            return null;
+        }).when(scheduler.scheduledTaskMonitor).execute(
+                eq(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK), eq("CRON"), any(Runnable.class));
+        var registrar = new ScheduledTaskRegistrar();
+        scheduler.configureTasks(registrar);
+
+        registrar.getTriggerTaskList().get(15).getRunnable().run();
+
+        verify(scheduler.scheduledTaskMonitor).execute(
+                eq(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK), eq("CRON"), any(Runnable.class));
+        verify(scheduler.accountScheduledDispatchService).scan(any(LocalDateTime.class));
     }
 
     @Test

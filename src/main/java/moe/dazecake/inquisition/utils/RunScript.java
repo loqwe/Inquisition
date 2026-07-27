@@ -15,6 +15,7 @@ import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
 import moe.dazecake.inquisition.service.impl.FinalLoginSweepService;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
+import moe.dazecake.inquisition.service.impl.AccountScheduledDispatchService;
 import moe.dazecake.inquisition.service.impl.ScheduledTaskMonitorService;
 import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import moe.dazecake.inquisition.service.impl.UrgentTaskService;
@@ -73,11 +74,17 @@ public class RunScript implements ApplicationRunner {
     @Resource
     UrgentTaskService urgentTaskService;
 
+    @Resource
+    AccountScheduledDispatchService accountScheduledDispatchService;
+
     @Value("${inquisition.secret:}")
     String secret;
 
     @Value("${inquisition.chinac.enableAutoDeviceManage:false}")
     boolean enableAutoDeviceManage;
+
+    @Value("${inquisition.accountSchedule.enabled:false}")
+    boolean enableAccountSchedule;
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
@@ -192,6 +199,11 @@ public class RunScript implements ApplicationRunner {
         } catch (RuntimeException exception) {
             log.warn("【审判庭初始化】26点最终补登启动补偿失败", exception);
         }
+        try {
+            runAccountScheduledDispatchCatchUp(now);
+        } catch (RuntimeException exception) {
+            log.warn("【审判庭初始化】账号定时调度启动补偿失败", exception);
+        }
 
         log.info("【审判庭初始化】 初始化完成");
     }
@@ -204,6 +216,20 @@ public class RunScript implements ApplicationRunner {
     void runFinalLoginCatchUp(LocalDateTime now) {
         scheduledTaskMonitor.execute(DynamicScheduleTask.FINAL_LOGIN_SWEEP_TASK, "STARTUP_RECOVERY",
                 () -> finalLoginSweepService.runIfDue(now));
+    }
+
+    void runAccountScheduledDispatchCatchUp(LocalDateTime now) {
+        if (!enableAccountSchedule) {
+            return;
+        }
+        var restored = accountScheduledDispatchService.restoreDispatchable(now);
+        var scanned = new int[1];
+        scheduledTaskMonitor.execute(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK,
+                "STARTUP_RECOVERY", () -> scanned[0] = accountScheduledDispatchService.scan(now).size());
+        if (!restored.isEmpty() || scanned[0] > 0) {
+            log.info("【审判庭初始化】定时运行恢复: restored={}, dispatchable={}",
+                    restored.size(), scanned[0]);
+        }
     }
 
     int cleanupUrgentLoginTasks(LocalDateTime now) {

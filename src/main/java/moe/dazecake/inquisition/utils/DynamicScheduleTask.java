@@ -17,6 +17,7 @@ import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
 import moe.dazecake.inquisition.service.impl.FinalLoginSweepService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
+import moe.dazecake.inquisition.service.impl.AccountScheduledDispatchService;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
 import moe.dazecake.inquisition.service.impl.MessageServiceImpl;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
@@ -58,6 +59,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     public static final String FINAL_LOGIN_SWEEP_TASK = "final-login-sweep";
     public static final String FINAL_LOGIN_SUMMARY_TASK = "final-login-summary";
     public static final String URGENT_LOGIN_CLEANUP_TASK = "urgent-login-cleanup";
+    public static final String ACCOUNT_SCHEDULED_DISPATCH_TASK = "account-scheduled-dispatch";
 
     private final Gson gson = new Gson();
 
@@ -95,6 +97,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     AccountRuntimeService accountRuntimeService;
 
     @Resource
+    AccountScheduledDispatchService accountScheduledDispatchService;
+
+    @Resource
     ChinacServiceImpl chinacService;
 
     @Resource
@@ -120,6 +125,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     @Value("${inquisition.chinac.maxPlayerInDevice:25}")
     Integer maxPlayerInDevice;
+
+    @Value("${inquisition.accountSchedule.enabled:false}")
+    boolean enableAccountSchedule;
 
     private static final long RECENT_OFFLINE_WINDOW_HOURS = 24;
     private static final long RECENT_TOP_OPERATOR_WINDOW_HOURS = 24;
@@ -332,6 +340,11 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 definition(15, URGENT_LOGIN_CLEANUP_TASK, "加急登录状态清理", "04:00切换游戏日并清理旧加急状态",
                         "0 0 4 * * ?", "每天04:00", 5, 10, () -> true),
                 () -> finalLoginSweepService.cleanup(GameDayClock.now()));
+        registerMonitoredTask(taskRegistrar,
+                definition(16, ACCOUNT_SCHEDULED_DISPATCH_TASK, "账号定时调度",
+                        "扫描到期账号定时配置并恢复持久化运行实例",
+                        "0 */1 * * * *", "每1分钟", 2, 2, () -> enableAccountSchedule),
+                () -> accountScheduledDispatchService.scan(GameDayClock.now()));
     }
 
     private ScheduledTaskDefinition definition(int order, String key, String name, String description,
