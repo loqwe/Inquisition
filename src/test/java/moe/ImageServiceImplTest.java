@@ -1,5 +1,6 @@
 package moe;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import moe.dazecake.inquisition.utils.Result;
@@ -7,6 +8,7 @@ import moe.dazecake.inquisition.service.impl.ImageServiceImpl;
 
 
 
+@Disabled("Manual integration test that uploads an image to external storage")
 public class ImageServiceImplTest {
 
     @Test

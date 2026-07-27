@@ -24,7 +24,12 @@ public class LogController {
 
     @Operation(summary = "增加日志")
     @PostMapping("/addLog")
-    public Result<String> addLog(@RequestBody AddLogDTO addLogDTO) {
+    public Result<String> addLog(@RequestParam(required = false) String deviceToken,
+                                 @RequestBody AddLogDTO addLogDTO) {
+        if ((addLogDTO.getFrom() == null || addLogDTO.getFrom().isBlank())
+                && deviceToken != null && !deviceToken.isBlank()) {
+            addLogDTO.setFrom(deviceToken);
+        }
         logService.addLog(addLogDTO, false);
         return Result.success("添加成功");
     }

@@ -13,8 +13,12 @@ import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.LogEntity;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
+import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
+import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
 import moe.dazecake.inquisition.service.impl.MessageServiceImpl;
+import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
+import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import moe.dazecake.inquisition.service.impl.TaskServiceImpl;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
@@ -24,13 +28,20 @@ import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.scheduling.support.CronTrigger;
 
 import javax.annotation.Resource;
+import javax.annotation.PreDestroy;
 import java.text.SimpleDateFormat;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.TimeZone;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Configuration
@@ -64,7 +75,19 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     TaskServiceImpl taskService;
 
     @Resource
+    DeviceRuntimeService deviceRuntimeService;
+
+    @Resource
+    TaskAssignmentService taskAssignmentService;
+
+    @Resource
+    AccountRuntimeService accountRuntimeService;
+
+    @Resource
     ChinacServiceImpl chinacService;
+
+    @Resource
+    DailyLoginSweepService dailyLoginSweepService;
 
     @Value("${spring.mail.to:}")
     String to;
@@ -83,6 +106,12 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     private static final long RECENT_OFFLINE_WINDOW_HOURS = 24;
     private static final long RECENT_TOP_OPERATOR_WINDOW_HOURS = 24;
+    Executor missingLogExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        var thread = new Thread(runnable, "missing-log-audit");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicBoolean missingLogScanInFlight = new AtomicBoolean();
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
@@ -110,83 +139,18 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         );
         //设备离线监控
         taskRegistrar.addTriggerTask(
-                () -> {
-                    for (java.util.Map.Entry<String, Integer> count : dynamicInfo.getDeviceCounterMap().entrySet()) {
-
-                        var token = count.getKey();
-                        var num = count.getValue();
-
-                        --num;
-                        dynamicInfo.getDeviceCounterMap().put(token, num);
-
-                        if (num == 0) {
-                            dynamicInfo.getDeviceStatusMap().put(token, 0);
-//                            log.warn("设备离线: " + token);
-                        } else if (num == -60) {
-                            //重连超时提示
-                            var device = deviceMapper.selectOne(
-                                    Wrappers.<DeviceEntity>lambdaQuery()
-                                            .eq(DeviceEntity::getDeviceToken, token)
-                            );
-
-                            //记录日志
-                            logService.logWarn("设备离线", "设备名称: " + device.getDeviceName() + "\n" +
-                                    "设备token: " + device.getDeviceToken() + "\n");
-
-                            //邮件通知
-                            messageService.pushAdmin("[审判庭] 设备离线", "设备名称: " + device.getDeviceName() + "\n"
-                                    + "设备token: " + device.getDeviceToken() + "\n"
-                                    + "时间: " + LocalDateTime.now() + "\n");
-
-                        } else if (num == 86400) {
-                            //超时24h，移除设备
-                            dynamicInfo.getDeviceStatusMap().remove(token);
-                            dynamicInfo.getDeviceCounterMap().remove(token);
-
-                            var device = deviceMapper.selectOne(
-                                    Wrappers.<DeviceEntity>lambdaQuery()
-                                            .eq(DeviceEntity::getDeviceToken, token)
-                            );
-                            device.setDelete(1);
-                            deviceMapper.updateById(device);
-
-                            //记录日志
-                            logService.logWarn("设备移除", "设备名称: " + device.getDeviceName() + "\n" +
-                                    "设备token: " + device.getDeviceToken() + "\n");
-
-                            //邮件通知
-                            messageService.pushAdmin("[审判庭] 设备移除", "设备名称: " + device.getDeviceName() + "\n"
-                                    + "设备token: " + device.getDeviceToken() + "\n"
-                                    + "时间: " + LocalDateTime.now() + "\n");
-                        }
-                    }
-                },
-                triggerContext -> new CronTrigger("0/5 * * * * ?").nextExecutionTime(triggerContext)
+                () -> deviceRuntimeService.scan(GameDayClock.now()),
+                triggerContext -> new CronTrigger("0 0/5 * * * ?").nextExecutionTime(triggerContext)
         );
         //任务超时检测
         taskRegistrar.addTriggerTask(
                 () -> {
                     if (dynamicInfo.getActive()) {
-                        //log.info("任务超时检测");
-                        LocalDateTime nowTime = LocalDateTime.now();
-                        int num = 0;
-                        var timeoutUsers = new ArrayList<Long>();
-                        synchronized (dynamicInfo.getWorkUserList()) {
-                            for (Long worker : dynamicInfo.getWorkUserList()) {
-                                if (!dynamicInfo.getWorkUserInfoMap().containsKey(worker)) {
-                                    continue;
-                                }
-                                if (dynamicInfo.getWorkUserExpireTime(worker).isBefore(nowTime)) {
-                                    //记录日志
-                                    logService.logWarn("任务超时", "");
-                                    timeoutUsers.add(worker);
-                                    num++;
-                                }
-                            }
-                        }
-                        timeoutUsers.forEach(taskService::forceHaltTask);
-                        if (num > 0) {
-                            log.info("【审判庭】 已处理超时任务数: " + num);
+                        var now = GameDayClock.now();
+                        notifyLongRunningTasks(now);
+                        var expiredAssignments = taskAssignmentService.closeExpiredAssignments(now);
+                        if (expiredAssignments > 0) {
+                            log.info("【审判庭】 已处理超时任务数: " + expiredAssignments);
                         }
                     }
                 },
@@ -196,10 +160,10 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         taskRegistrar.addTriggerTask(
                 () -> {
                     log.info("【审判庭】 账号过期检测");
-                    var finalTime = LocalDateTime.now().plusDays(7);
+                    var finalTime = GameDayClock.now().plusDays(7);
                     var accountList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                             .lt(AccountEntity::getExpireTime, finalTime)
-                            .gt(AccountEntity::getExpireTime, LocalDateTime.now())
+                            .gt(AccountEntity::getExpireTime, GameDayClock.now())
                             .eq(AccountEntity::getDelete, 0));
                     accountList.forEach(
                             (account) -> {
@@ -218,7 +182,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 () -> {
                     log.info("【审判庭】 账号冻结检测");
                     var accountList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
-                            .gt(AccountEntity::getExpireTime, LocalDateTime.now())
+                            .gt(AccountEntity::getExpireTime, GameDayClock.now())
                             .eq(AccountEntity::getFreeze, 1)
                             .eq(AccountEntity::getDelete, 0));
                     accountList.forEach(
@@ -240,7 +204,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                     var accountList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                             .le(AccountEntity::getRefresh, 0)
                             .eq(AccountEntity::getDelete, 0)
-                            .ge(AccountEntity::getExpireTime, LocalDateTime.now())
+                            .ge(AccountEntity::getExpireTime, GameDayClock.now())
                     );
                     accountList.forEach(
                             (account) -> {
@@ -249,7 +213,14 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                             }
                     );
                 },
-                triggerContext -> new CronTrigger("0 0 0 * * ?").nextExecutionTime(triggerContext)
+                triggerContext -> new CronTrigger("0 0 4 * * ?",
+                        TimeZone.getTimeZone(GameDayClock.ZONE_ID)).nextExecutionTime(triggerContext)
+        );
+        //游戏日有效日志巡检：每天04:00切日，之后每小时检查一次，避免用错误的自然日判断。
+        taskRegistrar.addTriggerTask(
+                () -> submitMissingLogCheck(GameDayClock.now()),
+                triggerContext -> new CronTrigger("0 10 * * * ?",
+                        TimeZone.getTimeZone(GameDayClock.ZONE_ID)).nextExecutionTime(triggerContext)
         );
         //动态设备管理
         taskRegistrar.addTriggerTask(
@@ -259,7 +230,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                     }
                     log.info("【审判庭】 动态设备增加");
                     var payedUserList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
-                            .ge(AccountEntity::getExpireTime, LocalDateTime.now())
+                            .ge(AccountEntity::getExpireTime, GameDayClock.now())
                             .eq(AccountEntity::getDelete, 0));
                     var deviceList = deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
                             .eq(DeviceEntity::getDelete, 0));
@@ -308,7 +279,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                         }
                     }
                     for (DeviceEntity device : deviceList) {
-                        if (device.getExpireTime().isBefore(LocalDateTime.now().plusDays(7)) && device.getChinac() == 1) {
+                        if (device.getExpireTime().isBefore(GameDayClock.now().plusDays(7)) && device.getChinac() == 1) {
                             if (chinacService.renewDevice(device.getRegion(), device.getDeviceToken(), 1)) {
                                 String text = "续费设备: " + device.getDeviceName() + "\n" +
                                         "已为您自动续费，请留意扣费信息";
@@ -335,7 +306,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                     var accountList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                             .eq(AccountEntity::getFreeze, 0)
                             .eq(AccountEntity::getDelete, 0)
-                            .ge(AccountEntity::getExpireTime, LocalDateTime.now())
+                            .ge(AccountEntity::getExpireTime, GameDayClock.now())
                     );
                     accountList.forEach(
                             (account) -> {
@@ -349,10 +320,81 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 },
                 triggerContext -> new CronTrigger("0 0 4 * * ?").nextExecutionTime(triggerContext)
         );
+        //14点检查当前游戏日仍未成功登录的日常账号，并将其安全提升到等待队列前部。
+        taskRegistrar.addTriggerTask(
+                () -> runDailyLoginSweep(GameDayClock.now()),
+                triggerContext -> new CronTrigger("0 0 14 * * ?",
+                        TimeZone.getTimeZone(GameDayClock.ZONE_ID)).nextExecutionTime(triggerContext)
+        );
+    }
+
+    void runDailyLoginSweep(LocalDateTime now) {
+        try {
+            dailyLoginSweepService.runIfDue(now);
+        } catch (RuntimeException exception) {
+            log.warn("\u3010\u5ba1\u5224\u5ead\u301114\u70b9\u8865\u767b\u626b\u63cf\u5931\u8d25", exception);
+        }
+    }
+
+    void submitMissingLogCheck(LocalDateTime now) {
+        if (!missingLogScanInFlight.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            missingLogExecutor.execute(() -> {
+                try {
+                    var result = accountRuntimeService.checkMissingLogs(now);
+                    if (!result.getMissingAccounts().isEmpty()) {
+                        log.warn("【审判庭】满9小时未检测到有效游戏日志账号数: {}",
+                                result.getMissingAccounts().size());
+                    }
+                } catch (Exception exception) {
+                    log.warn("【审判庭】游戏日志巡检失败", exception);
+                } finally {
+                    missingLogScanInFlight.set(false);
+                }
+            });
+        } catch (RuntimeException exception) {
+            missingLogScanInFlight.set(false);
+            log.warn("【审判庭】游戏日志巡检提交失败", exception);
+        }
+    }
+
+    @PreDestroy
+    void shutdownMissingLogExecutor() {
+        if (missingLogExecutor instanceof ExecutorService) {
+            ((ExecutorService) missingLogExecutor).shutdownNow();
+        }
+    }
+
+    void notifyLongRunningTasks(LocalDateTime now) {
+        var assignments = taskAssignmentService.findLongRunning(now, 120);
+        if (assignments.isEmpty()) {
+            return;
+        }
+        var adminItems = new ArrayList<String>();
+        for (var assignment : assignments) {
+            if (!taskAssignmentService.markLongTaskNotified(assignment)) {
+                continue;
+            }
+            var account = accountMapper.selectById(assignment.getAccountId());
+            if (account == null) {
+                continue;
+            }
+            var elapsedMinutes = Math.max(0, Duration.between(assignment.getAssignedAt(), now).toMinutes());
+            messageService.push(account, "任务运行时间较长",
+                    "当前任务已运行约 " + elapsedMinutes + " 分钟，已达到2小时上限；系统将自动回收并重新排队，请检查设备是否卡住。");
+            adminItems.add(account.getName() + " / 设备 " + assignment.getDeviceToken()
+                    + "（已运行 " + elapsedMinutes + " 分钟）");
+        }
+        if (!adminItems.isEmpty()) {
+            messageService.pushAdmin("[审判庭] 任务占用过久",
+                    "以下任务已达到或超过2小时：\n" + String.join("\n", adminItems));
+        }
     }
 
     private void sendAdminSummary() {
-        var now = LocalDateTime.now().withSecond(0).withNano(0);
+        var now = GameDayClock.now().withSecond(0).withNano(0);
         var targetAdmins = new ArrayList<>(adminMapper.selectList(Wrappers.<AdminEntity>lambdaQuery()
                 .and(wrapper -> wrapper.eq(AdminEntity::getDelete, 0)
                         .or()
@@ -362,7 +404,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     }
 
     public void sendAdminSummaryNow(ArrayList<AdminEntity> targetAdmins) {
-        sendAdminSummaryNow(targetAdmins, LocalDateTime.now().withSecond(0).withNano(0));
+        sendAdminSummaryNow(targetAdmins, GameDayClock.now().withSecond(0).withNano(0));
     }
 
     private void sendAdminSummaryNow(ArrayList<AdminEntity> targetAdmins, LocalDateTime now) {
@@ -372,7 +414,8 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
         var offlineDevices = new ArrayList<>(deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
                 .eq(DeviceEntity::getDelete, 0)));
-        offlineDevices.removeIf(device -> !isRecentlyOfflineDevice(device, now));
+        offlineDevices.removeIf(device -> !ImportantDevicePolicy.includes(device)
+                || !isRecentlyOfflineDevice(device, now));
 
         var frozenAccounts = new ArrayList<>(accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                 .gt(AccountEntity::getExpireTime, now)

@@ -40,14 +40,14 @@ public class TaskController {
 
     @Operation(summary = "完成任务上报")
     @PostMapping("/completeTask")
-    public Result<String> completeTask(String deviceToken, String imageUrl) {
-        return taskService.completeTask(deviceToken, imageUrl);
+    public Result<String> completeTask(String deviceToken, String assignmentId, String imageUrl) {
+        return taskService.completeTask(deviceToken, assignmentId, imageUrl);
     }
 
     @Operation(summary = "任务失败上报")
     @PostMapping("/failTask")
-    public Result<String> failTask(String deviceToken, String type, String imageUrl) {
-        return taskService.failTask(deviceToken, type, imageUrl);
+    public Result<String> failTask(String deviceToken, String assignmentId, String type, String imageUrl) {
+        return taskService.failTask(deviceToken, assignmentId, type, imageUrl);
     }
 
     @Login

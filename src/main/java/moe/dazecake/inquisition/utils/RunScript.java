@@ -11,6 +11,10 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
+import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
+import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
+import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
+import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -22,7 +26,6 @@ import javax.annotation.Resource;
 import java.io.*;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 
 import static moe.dazecake.inquisition.utils.JWTUtils.SECRET;
@@ -45,6 +48,18 @@ public class RunScript implements ApplicationRunner {
 
     @Resource
     ChinacServiceImpl chinacService;
+
+    @Resource
+    TaskAssignmentService taskAssignmentService;
+
+    @Resource
+    DeviceRuntimeService deviceRuntimeService;
+
+    @Resource
+    AccountRuntimeService accountRuntimeService;
+
+    @Resource
+    DailyLoginSweepService dailyLoginSweepService;
 
     @Value("${inquisition.secret:}")
     String secret;
@@ -73,7 +88,7 @@ public class RunScript implements ApplicationRunner {
                 adminEntity.setPermission("root");
                 adminMapper.insert(adminEntity);
                 log.info("【审判庭初始化】 初始化管理员账号: root");
-                log.info("【审判庭初始化】 初始化管理员密码: 123456");
+                log.info("【审判庭初始化】 已初始化管理员账号，请通过安全渠道设置管理员密码");
             }
 
             var devices = deviceMapper.selectList(
@@ -97,7 +112,7 @@ public class RunScript implements ApplicationRunner {
                             .eq(DeviceEntity::getDeviceToken, chinacPhone.getId())) == null) {
                         var newDevice = new DeviceEntity();
                         Instant instant = Instant.ofEpochMilli(chinacPhone.getDueTime());
-                        ZoneId zone = ZoneId.systemDefault();
+                        var zone = GameDayClock.ZONE_ID;
                         newDevice.setDeviceName(chinacPhone.getName())
                                 .setDeviceToken(chinacPhone.getId())
                                 .setRegion(chinacPhone.getRegion())
@@ -115,7 +130,7 @@ public class RunScript implements ApplicationRunner {
                     .eq(AccountEntity::getDelete, 0)
                     .eq(AccountEntity::getFreeze, 0)
                     .eq(AccountEntity::getTaskType, "daily")
-                    .ge(AccountEntity::getExpireTime, LocalDateTime.now())
+                    .ge(AccountEntity::getExpireTime, GameDayClock.now())
             );
             for (AccountEntity account : dailyAccounts) {
                 dynamicInfo.setUserSanZero(account.getId());
@@ -123,12 +138,34 @@ public class RunScript implements ApplicationRunner {
             }
 
         }
-        if (!secret.equals("")) {
+        var now = GameDayClock.now();
+        // Active leases are authoritative in MySQL; do not revive stale work entries from data.json.
+        dynamicInfo.getWorkUserList().clear();
+        dynamicInfo.getWorkUserInfoMap().clear();
+        var activeDevices = deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
+                .eq(DeviceEntity::getDelete, 0));
+        activeDevices.forEach(device -> deviceRuntimeService.initializeDevice(device, now));
+        var expiredAssignments = taskAssignmentService.closeExpiredAssignments(now);
+        var restoredAssignments = taskAssignmentService.restoreActiveAssignments(now);
+        var restoredCooldowns = accountRuntimeService.restoreRetryCooldowns(now);
+        if (expiredAssignments > 0 || restoredAssignments > 0) {
+            log.info("【审判庭初始化】恢复任务租约: active={}, expired={}", restoredAssignments, expiredAssignments);
+        }
+        if (restoredCooldowns > 0) {
+            log.info("【审判庭初始化】恢复重试冷却账号数: {}", restoredCooldowns);
+        }
+
+        if (secret != null && !secret.isBlank()) {
             SECRET = secret;
         } else {
             SECRET = RandomStringUtils.randomAlphabetic(16);
-            log.info("【审判庭初始化】 已生成随机 secret: " + SECRET);
-            log.info("【审判庭初始化】 建议将 secret 写入配置文件中");
+            log.info("【审判庭初始化】 未配置 secret，已生成进程内随机值；如需跨重启保持会话，请通过环境变量配置固定值");
+        }
+
+        try {
+            dailyLoginSweepService.runIfDue(now);
+        } catch (RuntimeException exception) {
+            log.warn("【审判庭初始化】14点补登启动补偿失败", exception);
         }
 
         log.info("【审判庭初始化】 初始化完成");

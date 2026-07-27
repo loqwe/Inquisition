@@ -14,6 +14,7 @@ import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.LogEntity;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.LogService;
+import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.stereotype.Service;
 
@@ -38,21 +39,29 @@ public class LogServiceImpl implements LogService {
     @Resource
     ImageServiceImpl imageService;
 
+    @Resource
+    AccountRuntimeService accountRuntimeService;
+
     @Override
     public void addLog(AddLogDTO addLogDTO, boolean isSystem) {
         var logEntity = LogConvert.INSTANCE.toLogEntity(addLogDTO);
         logEntity.setId(0L);
-        logEntity.setTime(LocalDateTime.now());
+        logEntity.setTime(GameDayClock.now());
         logEntity.setDelete(0);
+        accountRuntimeService.enrichLogIdentity(logEntity);
         if (isSystem) {
             logEntity.setTaskType("SYSTEM");
             logEntity.setFrom("SYSTEM");
         } else {
-            specialScan(addLogDTO);
             //去除 "hikay960q4 "
-            logEntity.setDetail(logEntity.getDetail().replace("hikay960q4 ", ""));
+            if (logEntity.getDetail() != null) {
+                logEntity.setDetail(logEntity.getDetail().replace("hikay960q4 ", ""));
+            }
         }
         logMapper.insert(logEntity);
+        if (accountRuntimeService.onLog(logEntity, isSystem) && !isSystem) {
+            specialScan(addLogDTO);
+        }
     }
 
     @Override

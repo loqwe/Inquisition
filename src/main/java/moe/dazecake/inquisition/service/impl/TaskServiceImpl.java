@@ -10,12 +10,14 @@ import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.log.AddLogDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
+import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.local.UserSan;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.service.intf.TaskService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.Result;
 import moe.dazecake.inquisition.utils.TimeUtil;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,6 +55,18 @@ public class TaskServiceImpl implements TaskService {
     @Resource
     AccountMapper accountMapper;
 
+    @Resource
+    TaskAssignmentService taskAssignmentService;
+
+    @Resource
+    DeviceRuntimeService deviceRuntimeService;
+
+    @Resource
+    AccountRuntimeService accountRuntimeService;
+
+    @Resource
+    SanityOcrService sanityOcrService;
+
     @Value("${spring.mail.enable:false}")
     boolean enableMail;
 
@@ -63,7 +77,12 @@ public class TaskServiceImpl implements TaskService {
     boolean enableWxPusher;
 
     private AccountDTO buildTaskAccountDTO(AccountEntity account) {
+        return buildTaskAccountDTO(account, null);
+    }
+
+    private AccountDTO buildTaskAccountDTO(AccountEntity account, String assignmentId) {
         var dto = AccountConvert.INSTANCE.toAccountDTO(account);
+        dto.setAssignmentId(assignmentId);
         DailyPlanUtil.normalizeDailyPlan(dto);
         DailyPlanUtil.compileDailyPlanForDevice(dto);
         return dto;
@@ -86,6 +105,12 @@ public class TaskServiceImpl implements TaskService {
                 return "B服近期登录设备较多，疑似触发登录限制";
             case "manual":
                 return "管理员手动设置临时冷却";
+            case "retryBackoff":
+                return "任务连续失败，系统按递增间隔自动重试";
+            case "deviceRepeatedFailure":
+                return "设备连续失败，暂停1小时后自动重试";
+            case "deviceOffline":
+                return "设备离线，任务回收后等待重新分配";
             default:
                 return "任务失败: " + type + "，临时冷却后自动重试";
         }
@@ -126,18 +151,43 @@ public class TaskServiceImpl implements TaskService {
             return Result.failed("审判庭暂停任务授权中");
         }
 
+        synchronized (dynamicInfo.getHaltList()) {
+            if (dynamicInfo.getHaltList().contains(deviceToken)) {
+                return Result.failed(500, "设备等待停机确认，暂不分配新任务");
+            }
+        }
+
         //设备合法性检查
         var device = deviceMapper.selectOne(Wrappers.<DeviceEntity>lambdaQuery()
-                .eq(DeviceEntity::getDeviceToken, deviceToken));
+                .eq(DeviceEntity::getDeviceToken, deviceToken)
+                .eq(DeviceEntity::getDelete, 0));
         if (device == null) {
             return Result.unauthorized("设备未授权");
         }
+        var now = GameDayClock.now();
+        if (!deviceRuntimeService.hasFreshHeartbeat(deviceToken, now)) {
+            return Result.failed(429, "设备心跳已过期，暂不分配任务");
+        }
+        if (deviceRuntimeService.isSuspended(deviceToken, now)) {
+            return Result.failed(429, "设备连续失败，已暂停任务分配1小时");
+        }
 
         //重复请求检查
-        for (Long worker : dynamicInfo.getWorkUserList()) {
-            if (dynamicInfo.getWorkUserInfoMap().get(worker).getDeviceToken().equals(deviceToken)) {
-                return Result.repeatSuccess(buildTaskAccountDTO(accountMapper.selectById(worker)), "重复获取");
+        var existingAssignment = taskAssignmentService.findByDevice(deviceToken).orElse(null);
+        if (existingAssignment != null) {
+            if (existingAssignment.getLeaseExpiresAt() != null
+                    && !existingAssignment.getLeaseExpiresAt().isAfter(GameDayClock.now())) {
+                taskAssignmentService.closeAssignment(existingAssignment, "TIMED_OUT", "two hour limit", true);
+                existingAssignment = null;
             }
+        }
+        if (existingAssignment != null) {
+            var existingAccount = accountMapper.selectById(existingAssignment.getAccountId());
+            if (!isDeleted(existingAccount)) {
+                return Result.repeatSuccess(
+                        buildTaskAccountDTO(existingAccount, existingAssignment.getAssignmentId()), "重复获取");
+            }
+            taskAssignmentService.closeAssignment(existingAssignment, "INVALID", "account no longer exists", false);
         }
 
         //任务上锁
@@ -155,7 +205,7 @@ public class TaskServiceImpl implements TaskService {
                     iterator.remove();
                     continue;
                 }
-                if (isDeleted(account) || account.getExpireTime().isBefore(LocalDateTime.now())) {
+                if (isDeleted(account) || account.getExpireTime().isBefore(GameDayClock.now())) {
                     dynamicInfo.getUserSanInfoMap().remove(account.getId());
                     dynamicInfo.getFreezeUserInfoMap().remove(account.getId());
                     dynamicInfo.getCooldownReasonMap().remove(account.getId());
@@ -175,7 +225,6 @@ public class TaskServiceImpl implements TaskService {
 
                 //时间检查，不在激活区间则跳转到下一个判断
                 if (!checkActivationTime(account)) {
-                    iterator.remove();
                     continue;
                 }
 
@@ -214,7 +263,7 @@ public class TaskServiceImpl implements TaskService {
             }
 
             //任务上锁，同时分配强制超时期限
-            lockTask(deviceToken, account);
+            var assignment = lockTask(deviceToken, account);
 
             //记录日志
 //            log(deviceToken, account, "INFO", "任务开始", "任务开始", null);
@@ -229,7 +278,7 @@ public class TaskServiceImpl implements TaskService {
             dynamicInfo.setUserSanZero(account.getId());
 
 
-            return Result.success(buildTaskAccountDTO(account), "获取成功");
+            return Result.success(buildTaskAccountDTO(account, assignment.getAssignmentId()), "获取成功");
 
         } else {
             return Result.success("待分配队列为空");
@@ -237,15 +286,16 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
-    public Result<String> completeTask(String deviceToken, String imageUrl) {
-        var id = dynamicInfo.getUserIdByDeviceToken(deviceToken);
-        if (id == null) {
-            return Result.success("任务不存在");
+    public Result<String> completeTask(String deviceToken, String assignmentId, String imageUrl) {
+        var assignment = taskAssignmentService.findByDevice(deviceToken).orElse(null);
+        if (!taskAssignmentService.matchesSubmission(assignment, deviceToken, assignmentId)) {
+            return Result.failed(409, "任务分配已失效，请停止当前任务并重新获取");
         }
 
-        var account = accountMapper.selectById(id);
+        var account = accountMapper.selectById(assignment.getAccountId());
         if (account == null) {
-            return Result.success("任务不存在");
+            taskAssignmentService.closeAssignment(assignment, "INVALID", "account no longer exists", false);
+            return Result.notFound("任务账号不存在");
         }
 
         //检查B服限制新增设备
@@ -285,32 +335,60 @@ public class TaskServiceImpl implements TaskService {
             accountMapper.updateById(account);
         }
 
-        //移除队列
-        dynamicInfo.removeWorkUser(account.getId());
+        if (!taskAssignmentService.closeAssignment(
+                assignment, "COMPLETED", "device reported completion", false)) {
+            return Result.failed("任务完成状态保存失败，请稍后重试");
+        }
+        var completedAt = GameDayClock.now();
+        deviceRuntimeService.recordTaskSuccess(deviceToken, completedAt);
+        accountRuntimeService.recordTaskCompleted(account.getId(), completedAt);
+        sanityOcrService.submit(account.getId(), imageUrl, completedAt);
 
         return Result.success("success");
     }
 
     @Override
-    public Result<String> failTask(String deviceToken, String type, String imageUrl) {
-        var id = dynamicInfo.getUserIdByDeviceToken(deviceToken);
-        if (id == null) {
-            return Result.success("任务不存在");
+    public Result<String> failTask(String deviceToken, String assignmentId, String type, String imageUrl) {
+        var assignment = taskAssignmentService.findByDevice(deviceToken).orElse(null);
+        if (!taskAssignmentService.matchesSubmission(assignment, deviceToken, assignmentId)) {
+            return Result.failed(409, "任务分配已失效，请停止当前任务并重新获取");
         }
 
-        var account = accountMapper.selectById(id);
+        var account = accountMapper.selectById(assignment.getAccountId());
         if (account == null) {
-            return Result.success("任务不存在");
+            taskAssignmentService.closeAssignment(assignment, "INVALID", "account no longer exists", false);
+            return Result.notFound("任务账号不存在");
         }
 
         //记录日志
 //        log(deviceToken, account, "WARN", "任务失败", "任务失败,请查看上一条日志检查原因: " + type, imageUrl);
 
-        //移除队列
-        dynamicInfo.removeWorkUser(account.getId());
+        if (!taskAssignmentService.closeAssignment(
+                assignment, "FAILED", type == null ? "unknown" : type, false)) {
+            return Result.failed("任务失败状态保存失败，请稍后重试");
+        }
+
+        var failureAt = GameDayClock.now();
+        var retryUntil = accountRuntimeService.recordFailure(
+                account, deviceToken, type == null ? "unknown" : type, failureAt);
 
         //异常处理
         errorHandle(account, deviceToken, type);
+        var existingCooldown = dynamicInfo.getFreezeUserInfoMap().get(account.getId());
+        if (existingCooldown == null || existingCooldown.isBefore(retryUntil)) {
+            dynamicInfo.getFreezeUserInfoMap().put(account.getId(), retryUntil);
+            dynamicInfo.getCooldownReasonMap().put(account.getId(), "retryBackoff");
+        }
+        addWaitTaskIfAbsent(account.getId());
+
+        if (deviceRuntimeService.recordTaskFailure(deviceToken, failureAt)) {
+            var suspendedUntil = failureAt.plusHours(1);
+            dynamicInfo.getFreezeUserInfoMap().put(account.getId(), suspendedUntil);
+            dynamicInfo.getCooldownReasonMap().put(account.getId(), "deviceRepeatedFailure");
+            addWaitTaskIfAbsent(account.getId());
+            messageService.push(account, "设备异常",
+                    "当前设备连续任务失败，已暂停1小时并重新排队；系统会自动换用其他可用设备。");
+        }
 
         //推送消息
         messageService.push(account, "任务失败", "任务失败，请登陆面板查看失败原因");
@@ -366,7 +444,7 @@ public class TaskServiceImpl implements TaskService {
                                 .eq(AccountEntity::getDelete, 0)
                                 .eq(AccountEntity::getFreeze, 0)
                                 .eq(AccountEntity::getTaskType, "daily")
-                                .ge(AccountEntity::getExpireTime, LocalDateTime.now())
+                                .ge(AccountEntity::getExpireTime, GameDayClock.now())
                 ).stream().map(AccountEntity::getId).collect(Collectors.toList())
         );
 
@@ -389,8 +467,16 @@ public class TaskServiceImpl implements TaskService {
 
     @Override
     public Result<String> forceUnlockTaskList() {
+        for (TaskAssignmentEntity assignment : taskAssignmentService.findAll()) {
+            synchronized (dynamicInfo.getHaltList()) {
+                if (!dynamicInfo.getHaltList().contains(assignment.getDeviceToken())) {
+                    dynamicInfo.getHaltList().add(assignment.getDeviceToken());
+                }
+            }
+            taskAssignmentService.closeAssignment(assignment, "REVOKED", "administrator force unlock", true);
+        }
         dynamicInfo.getWorkUserList().clear();
-        dynamicInfo.getAllWorkUserInfo().clear();
+        dynamicInfo.getWorkUserInfoMap().clear();
 
         //记录日志
         logService.logInfo("强制解锁", "管理员强制解锁释放整个上锁队列");
@@ -566,7 +652,7 @@ public class TaskServiceImpl implements TaskService {
     public boolean checkFreeze(AccountEntity account) {
         if (dynamicInfo.getFreezeUserInfoMap().containsKey(account.getId())) {
             //检测是否结束冻结
-            if (dynamicInfo.getFreezeUserInfoMap().get(account.getId()).isBefore(LocalDateTime.now())) {
+            if (dynamicInfo.getFreezeUserInfoMap().get(account.getId()).isBefore(GameDayClock.now())) {
                 dynamicInfo.getFreezeUserInfoMap().remove(account.getId());
                 dynamicInfo.getCooldownReasonMap().remove(account.getId());
                 //解冻，不在冻结状态
@@ -582,7 +668,7 @@ public class TaskServiceImpl implements TaskService {
     }
 
     public int restoreExpiredCooldownTasks() {
-        var now = LocalDateTime.now();
+        var now = GameDayClock.now();
         var expiredIds = new java.util.ArrayList<Long>();
         synchronized (dynamicInfo.getFreezeUserInfoMap()) {
             for (java.util.Map.Entry<Long, LocalDateTime> entry : dynamicInfo.getFreezeUserInfoMap().entrySet()) {
@@ -621,7 +707,7 @@ public class TaskServiceImpl implements TaskService {
     public java.util.HashMap<Long, LocalDateTime> getActiveCooldownTaskMap() {
         restoreExpiredCooldownTasks();
         var result = new java.util.HashMap<Long, LocalDateTime>();
-        var now = LocalDateTime.now();
+        var now = GameDayClock.now();
         synchronized (dynamicInfo.getFreezeUserInfoMap()) {
             dynamicInfo.getFreezeUserInfoMap().forEach((id, freezeUntil) -> {
                 if (freezeUntil != null && freezeUntil.isAfter(now)) {
@@ -664,7 +750,7 @@ public class TaskServiceImpl implements TaskService {
             return Result.notFound("账号不存在");
         }
         var freezeUntil = dynamicInfo.getFreezeUserInfoMap().get(id);
-        if (freezeUntil != null && freezeUntil.isBefore(LocalDateTime.now())) {
+                if (freezeUntil != null && freezeUntil.isBefore(GameDayClock.now())) {
             dynamicInfo.getFreezeUserInfoMap().remove(id);
             freezeUntil = null;
         }
@@ -689,7 +775,7 @@ public class TaskServiceImpl implements TaskService {
         } catch (Exception exception) {
             return Result.paramError("冷却时间格式错误");
         }
-        if (!parsedFreezeUntil.isAfter(LocalDateTime.now())) {
+        if (!parsedFreezeUntil.isAfter(GameDayClock.now())) {
             return Result.paramError("冷却时间必须晚于当前时间");
         }
         forceHaltTask(id);
@@ -712,20 +798,8 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
-    public void lockTask(String deviceToken, AccountEntity account) {
-        LocalDateTime localDateTime = LocalDateTime.now();
-        switch (TaskType.getByStr(account.getTaskType())) {
-            case DAILY:
-                dynamicInfo.addWorkUser(account.getId(), deviceToken, localDateTime.plusHours(2));
-                break;
-            case ROGUE:
-            case ROGUE2:
-                dynamicInfo.addWorkUser(account.getId(), deviceToken, localDateTime.plusHours(72));
-                break;
-            case SAND_FIRE:
-                dynamicInfo.addWorkUser(account.getId(), deviceToken, localDateTime.plusHours(24));
-                break;
-        }
+    public TaskAssignmentEntity lockTask(String deviceToken, AccountEntity account) {
+        return taskAssignmentService.createAssignment(account, deviceToken, GameDayClock.now());
     }
 
     @Override
@@ -735,7 +809,7 @@ public class TaskServiceImpl implements TaskService {
         TaskType type = TaskType.getByStr(account.getTaskType());
 
         String detail =
-                "[" + type.getName() + "] [" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")) + "] " + type +
+                "[" + type.getName() + "] [" + GameDayClock.now().format(DateTimeFormatter.ofPattern("HH:mm")) + "] " + type +
                         content;
 
         addLogDTO.setLevel(level)
@@ -746,7 +820,10 @@ public class TaskServiceImpl implements TaskService {
                 .setFrom(deviceToken)
                 .setServer(account.getServer())
                 .setName(account.getName())
-                .setAccount(account.getAccount());
+                .setAccount(account.getAccount())
+                .setAccountId(account.getId())
+                .setAssignmentId(dynamicInfo.getWorkUserInfoMap().containsKey(account.getId())
+                        ? dynamicInfo.getWorkUserInfoMap().get(account.getId()).getAssignmentId() : null);
 
         logService.addLog(addLogDTO, false);
     }
@@ -757,13 +834,13 @@ public class TaskServiceImpl implements TaskService {
         var errorType = type == null ? "unknown" : type;
         switch (errorType) {
             case ("lineBusy"): {
-                putAccountOnCooldown(account, deviceToken, "lineBusy", LocalDateTime.now().plusHours(1), true, true);
+                putAccountOnCooldown(account, deviceToken, "lineBusy", GameDayClock.now().plusHours(1), true, true);
                 break;
             }
             case ("accountError"): {
                 if (account.getServer() == 0) {
                     if (httpService.isOfficialAccountWork(account.getAccount(), account.getPassword())) {
-                        putAccountOnCooldown(account, deviceToken, "accountError", LocalDateTime.now().plusHours(1), true, true);
+                        putAccountOnCooldown(account, deviceToken, "accountError", GameDayClock.now().plusHours(1), true, true);
                     } else {
                         account.setFreeze(1);
                         accountMapper.updateById(account);
@@ -774,7 +851,7 @@ public class TaskServiceImpl implements TaskService {
                     }
                 } else if (account.getServer() == 1) {
                     if (httpService.isBiliAccountWork(account.getAccount(), account.getPassword())) {
-                        putAccountOnCooldown(account, deviceToken, "biliLoginLimit", LocalDateTime.now().plusHours(1), true, true);
+                        putAccountOnCooldown(account, deviceToken, "biliLoginLimit", GameDayClock.now().plusHours(1), true, true);
                         messageService.push(account, "账号异常", "您近期登陆的设备较多，已被B服限制登陆，请立即修改密码并于面板更新密码,否则托管可能将无法继续进行");
                     } else {
                         account.setFreeze(1);
@@ -788,7 +865,7 @@ public class TaskServiceImpl implements TaskService {
                 break;
             }
             default: {
-                putAccountOnCooldown(account, deviceToken, errorType, LocalDateTime.now().plusMinutes(10), true, true);
+                putAccountOnCooldown(account, deviceToken, errorType, GameDayClock.now().plusMinutes(10), true, true);
                 break;
             }
         }
@@ -796,6 +873,18 @@ public class TaskServiceImpl implements TaskService {
 
     @Override
     public void forceHaltTask(Long id) {
+        if (id == null) {
+            return;
+        }
+        var assignment = taskAssignmentService.findByAccount(id).orElse(null);
+        if (assignment != null) {
+            synchronized (dynamicInfo.getHaltList()) {
+                if (!dynamicInfo.getHaltList().contains(assignment.getDeviceToken())) {
+                    dynamicInfo.getHaltList().add(assignment.getDeviceToken());
+                }
+            }
+            taskAssignmentService.closeAssignment(assignment, "REVOKED", "administrator halted task", false);
+        }
         synchronized (dynamicInfo.getWaitUserList()) {
             var waitIterator = dynamicInfo.getWaitUserList().iterator();
             while (waitIterator.hasNext()) {
@@ -814,7 +903,11 @@ public class TaskServiceImpl implements TaskService {
                     var waitHaltDevice = dynamicInfo.getWorkUserInfoMap().get(worker).getDeviceToken();
                     workIterator.remove();
                     dynamicInfo.getWorkUserInfoMap().remove(worker);
-                    dynamicInfo.getHaltList().add(waitHaltDevice);
+                    synchronized (dynamicInfo.getHaltList()) {
+                        if (!dynamicInfo.getHaltList().contains(waitHaltDevice)) {
+                            dynamicInfo.getHaltList().add(waitHaltDevice);
+                        }
+                    }
                     break;
                 }
             }
@@ -853,7 +946,7 @@ public class TaskServiceImpl implements TaskService {
             }
 
             //检查是否已到期
-            if (account.getExpireTime().isBefore(LocalDateTime.now())) {
+            if (account.getExpireTime().isBefore(GameDayClock.now())) {
                 entryIterator.remove();
                 messageService.push(account, "到期提醒", "您的账号已到期，作战已暂停，若仍需托管请及时续费");
                 continue;

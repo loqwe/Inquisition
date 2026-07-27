@@ -25,4 +25,10 @@ public class HeartBeatDTO {
 
     @Schema(description = "设备token")
     String deviceToken;//设备token
+
+    @Schema(description = "Current task assignment ID")
+    String assignmentId;
+
+    @Schema(description = "Client version")
+    String clientVersion;
 }

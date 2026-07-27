@@ -5,4 +5,5 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 
 @Data
 public class AccountDTO extends AccountEntity {
+    private String assignmentId;
 }

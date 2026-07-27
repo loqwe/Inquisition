@@ -109,6 +109,16 @@ public class DynamicInfo extends MemoryInfo {
         workUserInfoMap.put(userId, new WorkUser(deviceToken, expireTime));
     }
 
+    public void addWorkUser(Long userId, String deviceToken, LocalDateTime expireTime,
+                            String assignmentId, LocalDateTime assignedAt,
+                            LocalDateTime lastProgressAt, boolean gameStarted) {
+        if (!workUserList.contains(userId)) {
+            workUserList.add(userId);
+        }
+        workUserInfoMap.put(userId, new WorkUser(deviceToken, expireTime, assignmentId,
+                assignedAt, lastProgressAt, gameStarted));
+    }
+
     //删除work队列
     public void removeWorkUser(Long userId) {
         workUserList.remove(userId);

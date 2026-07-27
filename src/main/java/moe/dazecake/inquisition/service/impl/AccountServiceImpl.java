@@ -15,12 +15,14 @@ import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.AccountService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.GameDayClock;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -34,6 +36,9 @@ public class AccountServiceImpl implements AccountService {
 
     @Resource
     AccountMapper accountMapper;
+
+    @Resource
+    DailyLoginService dailyLoginService;
 
     @Resource
     MessageServiceImpl messageService;
@@ -367,17 +372,27 @@ public class AccountServiceImpl implements AccountService {
         result.setCurrent(data.getCurrent());
         result.setPage(data.getPages());
         result.setTotal(data.getTotal());
+        Set<Long> accountIds = new HashSet<>();
+        data.getRecords().forEach(account -> {
+            if (account != null && account.getId() != null) {
+                accountIds.add(account.getId());
+            }
+        });
+        var todayLoginCounts = dailyLoginService.getLoginCounts(accountIds, GameDayClock.now());
 
         for (AccountEntity user : data.getRecords()) {
             hydrateConfigFromRawJson(user);
+            AccountWithSanVO accountWithSanVO;
             if (dynamicInfo.getUserSanInfoMap().containsKey(user.getId())) {
-                result.getRecords().add(AccountConvert.INSTANCE.toAccountWithSanVO(
+                accountWithSanVO = AccountConvert.INSTANCE.toAccountWithSanVO(
                         user,
-                        dynamicInfo.getUserSanInfoMap().get(user.getId()).getSan() + "/" + dynamicInfo.getUserSanInfoMap().get(user.getId()).getMaxSan())
+                        dynamicInfo.getUserSanInfoMap().get(user.getId()).getSan() + "/" + dynamicInfo.getUserSanInfoMap().get(user.getId()).getMaxSan()
                 );
             } else {
-                result.getRecords().add(AccountConvert.INSTANCE.toAccountWithSanVO(user, ""));
+                accountWithSanVO = AccountConvert.INSTANCE.toAccountWithSanVO(user, "");
             }
+            accountWithSanVO.setTodayLoginCount(todayLoginCounts.getOrDefault(user.getId(), 0));
+            result.getRecords().add(accountWithSanVO);
         }
         return result;
     }

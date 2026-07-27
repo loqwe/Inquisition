@@ -1,0 +1,9 @@
+package moe.dazecake.inquisition.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import moe.dazecake.inquisition.model.entity.AccountRuntimeEntity;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface AccountRuntimeMapper extends BaseMapper<AccountRuntimeEntity> {
+}

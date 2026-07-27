@@ -84,4 +84,22 @@ class LegacyClientHttpContractTest {
         assertNull(captor.getValue().getAssignmentId());
         assertNull(captor.getValue().getAccountId());
     }
+
+    @Test
+    void legacyLogUsesQueryDeviceTokenWhenPayloadSourceIsMissing() throws Exception {
+        var service = mock(LogServiceImpl.class);
+        var controller = new LogController();
+        controller.logService = service;
+        var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mvc.perform(post("/addLog")
+                        .param("deviceToken", "device-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"level\":\"INFO\",\"title\":\"登录成功\",\"account\":\"legacy\"}"))
+                .andExpect(status().isOk());
+
+        var captor = ArgumentCaptor.forClass(AddLogDTO.class);
+        verify(service).addLog(captor.capture(), eq(false));
+        assertEquals("device-1", captor.getValue().getFrom());
+    }
 }

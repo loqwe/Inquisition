@@ -9,15 +9,14 @@ server:
 spring:
   # 数据库配置
   datasource:
-    driver-class-name: org.sqlite.JDBC
-    url: jdbc:sqlite:${SQLITE_DB_PATH:./data/inquisition.db}
-    username:
-    password:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:inquisition}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
     type: com.alibaba.druid.pool.DruidDataSource
   sql:
     init:
-      mode: always
-      schema-locations: classpath:db/schema-sqlite.sql
+      mode: never
   mail:
     enable: false # 启用邮件发送
     host: smtp.qq.com # 邮件服务器地址
@@ -41,9 +40,10 @@ mybatis:
   model:
     pack: moe.dazecake.inquisition.model.entity
   database:
-    type: sqlite
+    type: mysql
 
 mybatis-plus:
+  mapper-locations: classpath*:com/gitee/sunchenbin/mybatis/actable/mapping/*/*.xml
   configuration:
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 #    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
@@ -70,6 +70,19 @@ storage:
     password: yourpassword
     uploadDir: /inquisition/log/img
 #uploadDir是CHFS内的相对位置，直接放在主目录下请留空不填(连“/”也不要留)
+  discord:
+# Cloudflare Worker 代理 Discord 私有频道。上传密钥只通过环境变量注入，不要提交到仓库。
+    enable: ${DISCORD_IMAGE_STORAGE_ENABLE:false}
+    worker-base-url: ${DISCORD_IMAGE_WORKER_URL:}
+    upload-token: ${DISCORD_IMAGE_UPLOAD_TOKEN:}
+    max-image-bytes: ${DISCORD_IMAGE_MAX_BYTES:8388608}
 
 inquisition:
   secret: xxx # 用于加密token 建议使用系统随机生成的
+  skland-sync-secret: ${INQUISITION_SKLAND_SYNC_SECRET:}
+  ocr:
+    enabled: ${INQUISITION_OCR_ENABLE:false}
+    service-url: ${INQUISITION_OCR_SERVICE_URL:}
+    allowed-image-hosts: ${INQUISITION_OCR_ALLOWED_IMAGE_HOSTS:}
+    max-image-bytes: ${INQUISITION_OCR_MAX_IMAGE_BYTES:8388608}
+    minimum-confidence: ${INQUISITION_OCR_MINIMUM_CONFIDENCE:0.80}

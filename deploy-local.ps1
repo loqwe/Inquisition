@@ -3,6 +3,7 @@
     [string]$ServerUser = 'root',
     [string]$KeyPath = "$HOME\.ssh\id_ed25519",
     [string]$RemoteAppDir = '/root/docker/inquisition/app',
+    [string]$RemoteEnvFile = '/root/docker/inquisition/.env',
     [string]$ContainerName = 'inquisition',
     [string]$Image = 'dazecake/inquisition:v1.2.8',
     [int]$ChunkSizeMB = 4,
@@ -87,21 +88,44 @@ if [ "$ACTUAL_HASH" != '{1}' ]; then
   exit 1
 fi
 unzip -tqq Inquisition-upload.jar >/dev/null
-cp -f Inquisition.jar Inquisition.jar.bak.manual.$(date +%Y%m%d_%H%M%S)
+BACKUP_JAR="Inquisition.jar.bak.manual.$(date +%Y%m%d_%H%M%S)"
+cp -f Inquisition.jar "$BACKUP_JAR"
 mv -f Inquisition-upload.jar Inquisition.jar
-docker stop {2} || true
-docker rm {2} || true
-docker run -d --name {2} --restart always -p 2000:2000 -v /root/docker/inquisition:/config -v {0}/Inquisition.jar:/Inquisition.jar {3}
-for i in $(seq 1 30); do
-  if curl -k -fsS https://127.0.0.1:2000/v3/api-docs >/dev/null; then
-    echo __DEPLOY_OK__
-    exit 0
-  fi
-  sleep 3
-done
-docker logs --tail 80 {2} >&2
-exit 1
-'@ -f $RemoteAppDir, $localHash, $ContainerName, $Image
+ENV_FILE_OPTION=
+if [ -f '{4}' ]; then
+  ENV_FILE_OPTION="--env-file={4}"
+fi
+start_container() {{
+  docker run -d --name {2} --restart always -p 2000:2000 $ENV_FILE_OPTION -v /root/docker/inquisition:/config -v {0}/Inquisition.jar:/Inquisition.jar {3} >/dev/null
+}}
+wait_healthy() {{
+  for i in $(seq 1 30); do
+    if curl -k -fsS https://127.0.0.1:2000/v3/api-docs >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}}
+docker stop {2} >/dev/null 2>&1 || true
+docker rm {2} >/dev/null 2>&1 || true
+if start_container && wait_healthy; then
+  echo __DEPLOY_OK__
+  exit 0
+fi
+docker logs --tail 80 {2} >&2 || true
+echo 'New deployment failed; restoring previous JAR.' >&2
+docker rm -f {2} >/dev/null 2>&1 || true
+cp -f Inquisition.jar "Inquisition.jar.failed.$(date +%Y%m%d_%H%M%S)"
+cp -f "$BACKUP_JAR" Inquisition.jar
+if start_container && wait_healthy; then
+  echo __ROLLBACK_OK__ >&2
+  exit 1
+fi
+docker logs --tail 80 {2} >&2 || true
+echo 'Automatic rollback failed.' >&2
+exit 2
+'@ -f $RemoteAppDir, $localHash, $ContainerName, $Image, $RemoteEnvFile
 $deployCommand = $deployCommand -replace "`r`n", "`n"
 & ssh @sshArgs "$ServerUser@$HostName" $deployCommand
 if ($LASTEXITCODE -ne 0) { throw 'Remote deploy failed.' }
