@@ -22,6 +22,8 @@ public class TaskAssignmentHistoryEntity {
     private String taskType;
     private String taskMode;
     private Long urgentTaskId;
+    private String dispatchSource = "AUTO";
+    private Long scheduledRunId;
     private String status;
     private LocalDateTime assignedAt;
     private LocalDateTime leaseExpiresAt;

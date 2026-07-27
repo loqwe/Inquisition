@@ -21,6 +21,8 @@ public class TaskAssignmentEntity {
     private String taskType;
     private String taskMode = "NORMAL";
     private Long urgentTaskId;
+    private String dispatchSource = "AUTO";
+    private Long scheduledRunId;
     private LocalDateTime assignedAt;
     private LocalDateTime leaseExpiresAt;
     private LocalDateTime lastProgressAt;
