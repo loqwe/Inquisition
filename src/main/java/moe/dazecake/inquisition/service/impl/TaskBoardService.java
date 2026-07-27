@@ -2,7 +2,9 @@ package moe.dazecake.inquisition.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import moe.dazecake.inquisition.mapper.AccountMapper;
+import moe.dazecake.inquisition.mapper.DeviceMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
 import moe.dazecake.inquisition.model.vo.task.RunningTaskVO;
@@ -33,6 +35,9 @@ public class TaskBoardService {
 
     @Resource
     AccountMapper accountMapper;
+
+    @Resource
+    DeviceMapper deviceMapper;
 
     @Resource
     TaskAssignmentService taskAssignmentService;
@@ -70,6 +75,18 @@ public class TaskBoardService {
         if (!accountIds.isEmpty()) {
             accountMapper.selectBatchIds(accountIds).forEach(account -> accountById.put(account.getId(), account));
         }
+        var deviceTokens = assignments.stream()
+                .map(TaskAssignmentEntity::getDeviceToken)
+                .filter(Objects::nonNull)
+                .filter(token -> !token.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, String> deviceNameByToken = new HashMap<>();
+        if (!deviceTokens.isEmpty()) {
+            deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
+                            .in(DeviceEntity::getDeviceToken, deviceTokens))
+                    .forEach(device -> deviceNameByToken.putIfAbsent(
+                            device.getDeviceToken(), device.getDeviceName()));
+        }
 
         Map<Long, UrgentTaskEntity> activeUrgentByAccount = activeUrgent.stream()
                 .filter(task -> task.getAccountId() != null)
@@ -98,6 +115,7 @@ public class TaskBoardService {
 
         var runningRows = assignments.stream()
                 .map(assignment -> runningTask(assignment, accountById.get(assignment.getAccountId()),
+                        deviceNameByToken.get(assignment.getDeviceToken()),
                         activeUrgentByAccount.containsKey(assignment.getAccountId()), now))
                 .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(RunningTaskVO::getUrgent, Comparator.reverseOrder())
@@ -188,7 +206,7 @@ public class TaskBoardService {
     }
 
     private RunningTaskVO runningTask(TaskAssignmentEntity assignment, AccountEntity account,
-                                      boolean urgent, LocalDateTime now) {
+                                      String deviceName, boolean urgent, LocalDateTime now) {
         if (assignment == null || account == null) {
             return null;
         }
@@ -198,7 +216,8 @@ public class TaskBoardService {
                 .setAccountId(account.getId()).setName(account.getName()).setAccount(account.getAccount())
                 .setTaskType(account.getTaskType()).setTaskMode(assignment.getTaskMode())
                 .setUrgent(urgent || UrgentTaskService.MODE_LOGIN_ONLY.equals(assignment.getTaskMode()))
-                .setDeviceToken(assignment.getDeviceToken()).setAssignedAt(assignment.getAssignedAt())
+                .setDeviceName(deviceName).setDeviceToken(assignment.getDeviceToken())
+                .setAssignedAt(assignment.getAssignedAt())
                 .setRunningMinutes(minutes).setLastProgressAt(assignment.getLastProgressAt())
                 .setLastProgressTitle(assignment.getLastProgressTitle())
                 .setLastProgressDetail(assignment.getLastProgressDetail())

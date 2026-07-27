@@ -1,7 +1,9 @@
 package moe.dazecake.inquisition.service.impl;
 
 import moe.dazecake.inquisition.mapper.AccountMapper;
+import moe.dazecake.inquisition.mapper.DeviceMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
@@ -42,6 +44,9 @@ class TaskBoardServiceTest {
         var urgentAssignment = assignment("urgent", 10L, "device-a", UrgentTaskService.MODE_LOGIN_ONLY,
                 now.minusMinutes(10)).setUrgentTaskId(12L).setLastProgressTitle("开始登录");
         when(service.taskAssignmentService.findAll()).thenReturn(List.of(normalAssignment, urgentAssignment));
+        when(service.deviceMapper.selectList(any())).thenReturn(List.of(
+                new DeviceEntity().setDeviceToken("device-a").setDeviceName("A"),
+                new DeviceEntity().setDeviceToken("device-b").setDeviceName("2")));
         when(service.accountMapper.selectBatchIds(any())).thenReturn(List.of(
                 account(7L, "账号7"), account(8L, "账号8"), account(9L, "账号9"),
                 account(10L, "账号10"), account(99L, "账号99")));
@@ -61,7 +66,9 @@ class TaskBoardServiceTest {
         assertTrue(board.getPendingTasks().get(1).getReturnedFromUrgent());
         assertEquals(10L, board.getRunningTasks().get(0).getAccountId());
         assertTrue(board.getRunningTasks().get(0).getUrgent());
+        assertEquals("A", board.getRunningTasks().get(0).getDeviceName());
         assertEquals(9L, board.getRunningTasks().get(1).getAccountId());
+        assertEquals("2", board.getRunningTasks().get(1).getDeviceName());
         assertEquals(2, board.getSummary().getUrgent());
         assertEquals(2, board.getSummary().getPending());
         assertEquals(2, board.getSummary().getInProgress());
@@ -105,6 +112,7 @@ class TaskBoardServiceTest {
     private static TaskBoardService service() {
         var service = new TaskBoardService();
         service.accountMapper = mock(AccountMapper.class);
+        service.deviceMapper = mock(DeviceMapper.class);
         service.taskAssignmentService = mock(TaskAssignmentService.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.taskService = mock(TaskServiceImpl.class);

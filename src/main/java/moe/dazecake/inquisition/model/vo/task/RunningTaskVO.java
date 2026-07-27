@@ -15,6 +15,7 @@ public class RunningTaskVO {
     private String taskType;
     private String taskMode;
     private Boolean urgent;
+    private String deviceName;
     private String deviceToken;
     private LocalDateTime assignedAt;
     private Long runningMinutes;
