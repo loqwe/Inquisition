@@ -24,7 +24,7 @@ public class AccountScheduledRunEntity {
     private Integer attemptCount = 0;
     private LocalDateTime nextRetryAt;
     private String lastError;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
+    private LocalDateTime createdAt = LocalDateTime.now();
+    private LocalDateTime updatedAt = LocalDateTime.now();
     private LocalDateTime finishedAt;
 }

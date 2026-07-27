@@ -21,6 +21,6 @@ public class AccountDispatchConfigEntity {
     private LocalTime scheduleTime;
     private LocalDateTime nextScheduledAt;
     private Integer activationPending = 0;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
+    private LocalDateTime createdAt = LocalDateTime.now();
+    private LocalDateTime updatedAt = LocalDateTime.now();
 }
