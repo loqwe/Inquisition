@@ -14,6 +14,7 @@ import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
+import moe.dazecake.inquisition.service.impl.ScheduledTaskMonitorService;
 import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Value;
@@ -60,6 +61,9 @@ public class RunScript implements ApplicationRunner {
 
     @Resource
     DailyLoginSweepService dailyLoginSweepService;
+
+    @Resource
+    ScheduledTaskMonitorService scheduledTaskMonitor;
 
     @Value("${inquisition.secret:}")
     String secret;
@@ -163,12 +167,17 @@ public class RunScript implements ApplicationRunner {
         }
 
         try {
-            dailyLoginSweepService.runIfDue(now);
+            runDailyLoginCatchUp(now);
         } catch (RuntimeException exception) {
             log.warn("【审判庭初始化】14点补登启动补偿失败", exception);
         }
 
         log.info("【审判庭初始化】 初始化完成");
+    }
+
+    void runDailyLoginCatchUp(LocalDateTime now) {
+        scheduledTaskMonitor.execute(DynamicScheduleTask.DAILY_LOGIN_SWEEP_TASK, "STARTUP_RECOVERY",
+                () -> dailyLoginSweepService.runIfDue(now));
     }
 
     @PreDestroy

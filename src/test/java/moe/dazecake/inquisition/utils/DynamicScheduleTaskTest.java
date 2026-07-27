@@ -10,6 +10,7 @@ import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
 import moe.dazecake.inquisition.service.impl.MessageServiceImpl;
+import moe.dazecake.inquisition.service.impl.ScheduledTaskMonitorService;
 import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import moe.dazecake.inquisition.service.impl.TaskServiceImpl;
 import moe.dazecake.inquisition.mapper.AdminMapper;
@@ -24,6 +25,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -31,14 +33,40 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
+import moe.dazecake.inquisition.model.local.ScheduledTaskDefinition;
 
 class DynamicScheduleTaskTest {
 
     @Test
+    void registersAllTwelveCronTasksThroughTheMonitor() {
+        var scheduler = new DynamicScheduleTask();
+        scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
+        var registrar = new ScheduledTaskRegistrar();
+
+        scheduler.configureTasks(registrar);
+
+        var definitionCaptor = ArgumentCaptor.forClass(ScheduledTaskDefinition.class);
+        verify(scheduler.scheduledTaskMonitor, times(12)).register(definitionCaptor.capture());
+        assertEquals(List.of(
+                        "queue-maintenance", "sanity-refresh", "device-heartbeat-scan",
+                        "assignment-timeout-scan", "account-expiry-reminder", "frozen-account-reminder",
+                        "daily-refresh-reset", "missing-log-audit", "auto-device-management",
+                        "admin-summary-dispatch", "abnormal-account-repair", "daily-login-sweep"),
+                definitionCaptor.getAllValues().stream()
+                        .map(ScheduledTaskDefinition::getKey)
+                        .collect(Collectors.toList()));
+        assertEquals(12, registrar.getTriggerTaskList().size());
+    }
+
+    @Test
     void dailyLoginSweepRunsAtFourteenInShanghai() {
         var scheduler = new DynamicScheduleTask();
+        scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
         var registrar = new ScheduledTaskRegistrar();
         scheduler.configureTasks(registrar);
         var lastRun = Date.from(Instant.parse("2026-07-27T05:00:00Z"));
@@ -53,6 +81,7 @@ class DynamicScheduleTaskTest {
     @Test
     void deviceOfflineScanRunsEveryFiveMinutes() {
         var scheduler = new DynamicScheduleTask();
+        scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
         var registrar = new ScheduledTaskRegistrar();
         scheduler.configureTasks(registrar);
         var lastRun = Date.from(Instant.parse("2026-07-21T04:00:00Z"));
@@ -100,6 +129,12 @@ class DynamicScheduleTaskTest {
     void missingLogScanRunsOffTheSchedulerAndDoesNotQueueOverlappingRuns() {
         var scheduler = new DynamicScheduleTask();
         scheduler.accountRuntimeService = mock(AccountRuntimeService.class);
+        scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(2)).run();
+            return null;
+        }).when(scheduler.scheduledTaskMonitor).execute(eq(DynamicScheduleTask.MISSING_LOG_AUDIT_TASK),
+                eq("CRON"), any(Runnable.class));
         var queued = new ArrayList<Runnable>();
         scheduler.missingLogExecutor = queued::add;
         var firstRun = LocalDateTime.of(2026, 7, 19, 13, 10);

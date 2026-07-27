@@ -12,12 +12,14 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.LogEntity;
+import moe.dazecake.inquisition.model.local.ScheduledTaskDefinition;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
 import moe.dazecake.inquisition.service.impl.MessageServiceImpl;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
+import moe.dazecake.inquisition.service.impl.ScheduledTaskMonitorService;
 import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import moe.dazecake.inquisition.service.impl.TaskServiceImpl;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,6 +34,7 @@ import javax.annotation.PreDestroy;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Date;
@@ -42,11 +45,15 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 
 @Slf4j
 @Configuration
 @EnableScheduling
 public class DynamicScheduleTask implements SchedulingConfigurer {
+
+    public static final String MISSING_LOG_AUDIT_TASK = "missing-log-audit";
+    public static final String DAILY_LOGIN_SWEEP_TASK = "daily-login-sweep";
 
     private final Gson gson = new Gson();
 
@@ -89,6 +96,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     @Resource
     DailyLoginSweepService dailyLoginSweepService;
 
+    @Resource
+    ScheduledTaskMonitorService scheduledTaskMonitor;
+
     @Value("${spring.mail.to:}")
     String to;
 
@@ -115,35 +125,28 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
-        //队列巡检
-        taskRegistrar.addTriggerTask(
+        registerMonitoredTask(taskRegistrar,
+                definition(1, "queue-maintenance", "队列巡检", "恢复冷却到期账号并清理等待队列重复项",
+                        "0 */1 * * * *", "每1分钟", 1, 2, () -> true),
                 () -> {
-                    //log.info("正在巡检队列: " + LocalDateTime.now().toLocalTime());
-                    //检查等待队列中是否存在重复项，若存在删除多余的重复项
                     var restored = taskService.restoreExpiredCooldownTasks();
                     LinkedHashSet<Long> set = new LinkedHashSet<>(dynamicInfo.getWaitUserList());
                     dynamicInfo.setWaitUserList(new ArrayList<>(set));
                     if (restored > 0) {
                         log.info("【审判庭】已恢复冷却到期账号数: " + restored);
                     }
-                },
-                triggerContext -> new CronTrigger("0 */1 * * * *").nextExecutionTime(triggerContext)
-        );
-        //理智刷新
-        taskRegistrar.addTriggerTask(
-                () -> {
-                    //log.info("正在刷新用户理智: " + LocalDateTime.now().toLocalTime());
-                    taskService.calculatingSan();
-                },
-                triggerContext -> new CronTrigger("0 */6 * * * *").nextExecutionTime(triggerContext)
-        );
-        //设备离线监控
-        taskRegistrar.addTriggerTask(
-                () -> deviceRuntimeService.scan(GameDayClock.now()),
-                triggerContext -> new CronTrigger("0 0/5 * * * ?").nextExecutionTime(triggerContext)
-        );
-        //任务超时检测
-        taskRegistrar.addTriggerTask(
+                });
+        registerMonitoredTask(taskRegistrar,
+                definition(2, "sanity-refresh", "理智刷新", "按时间推算并刷新账号理智",
+                        "0 */6 * * * *", "每6分钟", 5, 8, () -> true),
+                () -> taskService.calculatingSan());
+        registerMonitoredTask(taskRegistrar,
+                definition(3, "device-heartbeat-scan", "设备离线监控", "检查设备心跳、离线状态和递增通知",
+                        "0 0/5 * * * ?", "每5分钟", 3, 7, () -> true),
+                () -> deviceRuntimeService.scan(GameDayClock.now()));
+        registerMonitoredTask(taskRegistrar,
+                definition(4, "assignment-timeout-scan", "任务超时检测", "检查长期占用和过期任务租约",
+                        "0 0/5 * * * ?", "每5分钟", 3, 7, () -> true),
                 () -> {
                     if (dynamicInfo.getActive()) {
                         var now = GameDayClock.now();
@@ -153,11 +156,10 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                             log.info("【审判庭】 已处理超时任务数: " + expiredAssignments);
                         }
                     }
-                },
-                triggerContext -> new CronTrigger("0 0/5 * * * ?").nextExecutionTime(triggerContext)
-        );
-        //账号过期检测
-        taskRegistrar.addTriggerTask(
+                });
+        registerMonitoredTask(taskRegistrar,
+                definition(5, "account-expiry-reminder", "账号到期提醒", "提醒未来7天内到期的账号",
+                        "0 0 20 * * ?", "每天20:00", 10, 30, () -> true),
                 () -> {
                     log.info("【审判庭】 账号过期检测");
                     var finalTime = GameDayClock.now().plusDays(7);
@@ -174,11 +176,10 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                                 messageService.push(account, "【明日方舟】托管续费提醒", msg);
                             }
                     );
-                },
-                triggerContext -> new CronTrigger("0 0 20 * * ?").nextExecutionTime(triggerContext)
-        );
-        //账号冻结检测
-        taskRegistrar.addTriggerTask(
+                });
+        registerMonitoredTask(taskRegistrar,
+                definition(6, "frozen-account-reminder", "冻结账号提醒", "提醒仍处于冻结状态的有效账号",
+                        "0 0 20 * * ?", "每天20:00", 10, 30, () -> true),
                 () -> {
                     log.info("【审判庭】 账号冻结检测");
                     var accountList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
@@ -194,11 +195,10 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
                             }
                     );
-                },
-                triggerContext -> new CronTrigger("0 0 20 * * ?").nextExecutionTime(triggerContext)
-        );
-        //每日刷新次数更新
-        taskRegistrar.addTriggerTask(
+                });
+        registerMonitoredTask(taskRegistrar,
+                definition(7, "daily-refresh-reset", "每日刷新次数更新", "在游戏日刷新点恢复账号刷新次数",
+                        "0 0 4 * * ?", "每天04:00", 10, 30, () -> true),
                 () -> {
                     log.info("【审判庭】 每日刷新次数更新");
                     var accountList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
@@ -212,22 +212,15 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                                 accountMapper.updateById(account);
                             }
                     );
-                },
-                triggerContext -> new CronTrigger("0 0 4 * * ?",
-                        TimeZone.getTimeZone(GameDayClock.ZONE_ID)).nextExecutionTime(triggerContext)
-        );
-        //游戏日有效日志巡检：每天04:00切日，之后每小时检查一次，避免用错误的自然日判断。
-        taskRegistrar.addTriggerTask(
-                () -> submitMissingLogCheck(GameDayClock.now()),
-                triggerContext -> new CronTrigger("0 10 * * * ?",
-                        TimeZone.getTimeZone(GameDayClock.ZONE_ID)).nextExecutionTime(triggerContext)
-        );
-        //动态设备管理
-        taskRegistrar.addTriggerTask(
+                });
+        registerAsyncTask(taskRegistrar,
+                definition(8, MISSING_LOG_AUDIT_TASK, "游戏日志巡检", "检查满9小时没有有效游戏日志的账号",
+                        "0 10 * * * ?", "每小时第10分钟", 45, 20, () -> true),
+                () -> submitMissingLogCheck(GameDayClock.now()));
+        registerMonitoredTask(taskRegistrar,
+                definition(9, "auto-device-management", "动态设备管理", "按账号容量自动增加或续费云手机",
+                        "0 0 20 * * ?", "每天20:00", 15, 30, () -> enableAutoDeviceManage),
                 () -> {
-                    if (!enableAutoDeviceManage) {
-                        return;
-                    }
                     log.info("【审判庭】 动态设备增加");
                     var payedUserList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                             .ge(AccountEntity::getExpireTime, GameDayClock.now())
@@ -291,16 +284,14 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                             break;
                         }
                     }
-                },
-                triggerContext -> new CronTrigger("0 0 20 * * ?").nextExecutionTime(triggerContext)
-        );
-        //管理员状态汇总
-        taskRegistrar.addTriggerTask(
-                this::sendAdminSummary,
-                triggerContext -> new CronTrigger("0 * * * * ?").nextExecutionTime(triggerContext)
-        );
-        //异常账号检测
-        taskRegistrar.addTriggerTask(
+                });
+        registerMonitoredTask(taskRegistrar,
+                definition(10, "admin-summary-dispatch", "管理员状态汇总", "按管理员配置的时间发送合并状态汇总",
+                        "0 * * * * ?", "每1分钟检查", 2, 2, () -> true),
+                this::sendAdminSummary);
+        registerMonitoredTask(taskRegistrar,
+                definition(11, "abnormal-account-repair", "异常账号修复", "补全缺少本地理智状态的有效账号",
+                        "0 0 4 * * ?", "每天04:00", 10, 30, () -> true),
                 () -> {
                     log.info("【异常账号检测】 检测开始");
                     var accountList = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
@@ -317,15 +308,64 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                             }
                     );
                     log.info("【异常账号检测】 已完成所有异常账号自动检修");
-                },
-                triggerContext -> new CronTrigger("0 0 4 * * ?").nextExecutionTime(triggerContext)
-        );
-        //14点检查当前游戏日仍未成功登录的日常账号，并将其安全提升到等待队列前部。
+                });
+        registerMonitoredTask(taskRegistrar,
+                definition(12, DAILY_LOGIN_SWEEP_TASK, "14点补登扫描", "将今日登录次数小于1的账号提升到等待队列前部",
+                        "0 0 14 * * ?", "每天14:00", 15, 30, () -> true),
+                () -> runDailyLoginSweep(GameDayClock.now()));
+    }
+
+    private ScheduledTaskDefinition definition(int order, String key, String name, String description,
+                                               String cron, String scheduleText, int maxRunMinutes,
+                                               int lateToleranceMinutes, BooleanSupplier enabledSupplier) {
+        return ScheduledTaskDefinition.builder()
+                .order(order)
+                .key(key)
+                .name(name)
+                .description(description)
+                .cron(cron)
+                .timeZone(GameDayClock.ZONE_ID.getId())
+                .scheduleText(scheduleText)
+                .maxRunDuration(Duration.ofMinutes(maxRunMinutes))
+                .lateTolerance(Duration.ofMinutes(lateToleranceMinutes))
+                .enabledSupplier(enabledSupplier)
+                .build();
+    }
+
+    private void registerMonitoredTask(ScheduledTaskRegistrar taskRegistrar,
+                                       ScheduledTaskDefinition definition, Runnable task) {
+        registerTask(taskRegistrar, definition,
+                () -> scheduledTaskMonitor.execute(definition.getKey(), "CRON", task));
+    }
+
+    private void registerAsyncTask(ScheduledTaskRegistrar taskRegistrar,
+                                   ScheduledTaskDefinition definition, Runnable task) {
+        registerTask(taskRegistrar, definition, task);
+    }
+
+    private void registerTask(ScheduledTaskRegistrar taskRegistrar,
+                              ScheduledTaskDefinition definition, Runnable task) {
+        scheduledTaskMonitor.register(definition);
+        var trigger = new CronTrigger(definition.getCron(), TimeZone.getTimeZone(definition.getTimeZone()));
         taskRegistrar.addTriggerTask(
-                () -> runDailyLoginSweep(GameDayClock.now()),
-                triggerContext -> new CronTrigger("0 0 14 * * ?",
-                        TimeZone.getTimeZone(GameDayClock.ZONE_ID)).nextExecutionTime(triggerContext)
-        );
+                () -> {
+                    if (definition.isEnabled()) {
+                        task.run();
+                    }
+                },
+                triggerContext -> {
+                    var nextRun = trigger.nextExecutionTime(triggerContext);
+                    if (nextRun != null) {
+                        try {
+                            scheduledTaskMonitor.recordNextRun(definition.getKey(),
+                                    LocalDateTime.ofInstant(nextRun.toInstant(), ZoneId.of(definition.getTimeZone())),
+                                    GameDayClock.now());
+                        } catch (RuntimeException exception) {
+                            log.warn("脚本任务下次执行时间记录失败: {}", definition.getKey(), exception);
+                        }
+                    }
+                    return nextRun;
+                });
     }
 
     void runDailyLoginSweep(LocalDateTime now) {
@@ -333,6 +373,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
             dailyLoginSweepService.runIfDue(now);
         } catch (RuntimeException exception) {
             log.warn("\u3010\u5ba1\u5224\u5ead\u301114\u70b9\u8865\u767b\u626b\u63cf\u5931\u8d25", exception);
+            throw exception;
         }
     }
 
@@ -343,12 +384,14 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
         try {
             missingLogExecutor.execute(() -> {
                 try {
-                    var result = accountRuntimeService.checkMissingLogs(now);
-                    if (!result.getMissingAccounts().isEmpty()) {
-                        log.warn("【审判庭】满9小时未检测到有效游戏日志账号数: {}",
-                                result.getMissingAccounts().size());
-                    }
-                } catch (Exception exception) {
+                    scheduledTaskMonitor.execute(MISSING_LOG_AUDIT_TASK, "CRON", () -> {
+                        var result = accountRuntimeService.checkMissingLogs(now);
+                        if (!result.getMissingAccounts().isEmpty()) {
+                            log.warn("【审判庭】满9小时未检测到有效游戏日志账号数: {}",
+                                    result.getMissingAccounts().size());
+                        }
+                    });
+                } catch (RuntimeException exception) {
                     log.warn("【审判庭】游戏日志巡检失败", exception);
                 } finally {
                     missingLogScanInFlight.set(false);
