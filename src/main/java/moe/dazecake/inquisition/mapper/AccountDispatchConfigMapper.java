@@ -22,8 +22,7 @@ public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchC
             "dispatch_mode = #{config.dispatchMode},",
             "schedule_time = #{config.scheduleTime},",
             "next_scheduled_at = #{config.nextScheduledAt},",
-            "activation_pending = #{config.activationPending},",
-            "updated_at = CURRENT_TIMESTAMP(6)"
+            "activation_pending = #{config.activationPending}"
     })
     int upsert(@Param("config") AccountDispatchConfigEntity config);
 
@@ -40,8 +39,7 @@ public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchC
             "UPDATE account_dispatch_config",
             "SET schedule_time = #{scheduleTime},",
             "next_scheduled_at = #{nextScheduledAt},",
-            "activation_pending = 0,",
-            "updated_at = CURRENT_TIMESTAMP(6)",
+            "activation_pending = 0",
             "WHERE account_id = #{accountId}",
             "AND activation_pending = 1"
     })

@@ -61,7 +61,9 @@ public class AccountDispatchConfigService {
                 .setScheduleTime(SCHEDULED.equals(mode) ? request.getScheduleTime() : null)
                 .setNextScheduledAt(assignmentActive ? null : nextScheduledAt)
                 .setActivationPending(assignmentActive ? 1 : 0);
-        if (configMapper.upsert(config) <= 0) {
+        var affectedRows = configMapper.upsert(config);
+        if (affectedRows < 0
+                || affectedRows == 0 && !sameConfiguration(config, configMapper.selectById(account.getId()))) {
             throw new IllegalStateException("Unable to persist account dispatch configuration");
         }
     }
@@ -115,5 +117,14 @@ public class AccountDispatchConfigService {
         } catch (IllegalArgumentException exception) {
             throw new IllegalStateException("Persisted dispatch configuration is invalid", exception);
         }
+    }
+
+    private boolean sameConfiguration(AccountDispatchConfigEntity expected,
+                                      AccountDispatchConfigEntity persisted) {
+        return persisted != null
+                && Objects.equals(expected.getDispatchMode(), persisted.getDispatchMode())
+                && Objects.equals(expected.getScheduleTime(), persisted.getScheduleTime())
+                && Objects.equals(expected.getNextScheduledAt(), persisted.getNextScheduledAt())
+                && Objects.equals(expected.getActivationPending(), persisted.getActivationPending());
     }
 }

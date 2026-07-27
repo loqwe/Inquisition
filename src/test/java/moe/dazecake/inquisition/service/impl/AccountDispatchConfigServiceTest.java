@@ -108,7 +108,7 @@ class AccountDispatchConfigServiceTest {
         var upsertSql = normalizedSql(insert.value());
         assertTrue(upsertSql.contains("INSERT INTO ACCOUNT_DISPATCH_CONFIG"));
         assertTrue(upsertSql.contains("ON DUPLICATE KEY UPDATE"));
-        assertTrue(upsertSql.contains("UPDATED_AT = CURRENT_TIMESTAMP(6)"));
+        assertFalse(upsertSql.contains("UPDATED_AT"));
         assertTrue(upsertSql.contains("SCHEDULE_TIME"));
         assertTrue(upsertSql.contains("NEXT_SCHEDULED_AT"));
 
@@ -116,7 +116,7 @@ class AccountDispatchConfigServiceTest {
         var pendingSql = normalizedSql(update.value());
         assertTrue(pendingSql.contains("ACTIVATION_PENDING = 0"));
         assertTrue(pendingSql.contains("ACTIVATION_PENDING = 1"));
-        assertTrue(pendingSql.contains("UPDATED_AT = CURRENT_TIMESTAMP(6)"));
+        assertFalse(pendingSql.contains("UPDATED_AT"));
     }
 
     @Test
@@ -252,14 +252,34 @@ class AccountDispatchConfigServiceTest {
     }
 
     @Test
-    void updateFailsWhenAtomicUpsertAffectsNoRows() {
+    void zeroRowUpsertSucceedsWhenPersistedConfigurationMatches() {
         var account = accountWithActiveMonday();
+        var persisted = scheduledConfig(account.getId())
+                .setNextScheduledAt(LocalDateTime.of(2026, 7, 27, 19, 30));
         when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(0);
+        when(configMapper.selectById(account.getId())).thenReturn(persisted);
+
+        service.update(account,
+                request(AccountDispatchConfigService.SCHEDULED, LocalTime.of(19, 30)),
+                false, mondayMorning());
+
+        verify(configMapper).selectById(account.getId());
+    }
+
+    @Test
+    void zeroRowUpsertFailsWhenPersistedConfigurationDiffers() {
+        var account = accountWithActiveMonday();
+        var persisted = scheduledConfig(account.getId())
+                .setNextScheduledAt(LocalDateTime.of(2026, 7, 27, 19, 30))
+                .setActivationPending(1);
+        when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(0);
+        when(configMapper.selectById(account.getId())).thenReturn(persisted);
 
         assertThrows(IllegalStateException.class,
                 () -> service.update(account,
                         request(AccountDispatchConfigService.SCHEDULED, LocalTime.of(19, 30)),
                         false, mondayMorning()));
+        verify(configMapper).selectById(account.getId());
     }
 
     @Test
