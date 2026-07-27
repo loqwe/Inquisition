@@ -1,5 +1,6 @@
 package moe.dazecake.inquisition.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.mapper.DeviceMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
@@ -375,12 +376,27 @@ class TaskServiceImplTest {
         assertTrue(!payload.getConfig().getDaily().isTask());
         assertTrue(!payload.getConfig().getDaily().isActivity());
         assertEquals(Boolean.FALSE, payload.getConfig().getDaily().getShopping());
+        assertEquals(false, new ObjectMapper().valueToTree(payload.getConfig().getDaily())
+                .get("shopping").asBoolean());
         assertTrue(!payload.getConfig().getDaily().getInfrastructure().isHarvest());
         assertTrue(!payload.getConfig().getDaily().getOffer().isEnable());
 
         assertEquals(1, storedConfig.getDaily().getFight().size());
         assertTrue(storedConfig.getDaily().isMail());
         assertTrue(storedConfig.getDaily().isFriend());
+    }
+
+    @Test
+    void normalPayloadDoesNotExposeTheLoginOnlyShoppingFlagToLegacyClients() {
+        var service = new TaskServiceImpl();
+        var account = new AccountEntity().setId(7L).setTaskType("daily").setConfig(new ConfigEntity());
+        var assignment = new TaskAssignmentEntity().setAssignmentId("assignment-normal")
+                .setTaskMode(TaskAssignmentService.MODE_NORMAL);
+
+        var payload = service.buildTaskAccountDTO(account, assignment);
+        var serializedDaily = new ObjectMapper().valueToTree(payload.getConfig().getDaily());
+
+        assertTrue(!serializedDaily.has("shopping"));
     }
 
     @Test
