@@ -61,8 +61,39 @@ class AccountScheduleCalculatorTest {
     }
 
     @Test
+    void nullActivationUsesTheExistingSevenDayDefaults() {
+        var account = new AccountEntity().setActive(null);
+
+        var next = calculator.nextOccurrence(account, LocalTime.of(19, 30),
+                LocalDateTime.of(2026, 7, 27, 20, 0));
+
+        assertEquals(LocalDateTime.of(2026, 7, 28, 19, 30), next);
+    }
+
+    @Test
+    void findsAStrictlyFutureOccurrenceAcrossMultipleDisabledDays() {
+        var account = accountEnabledOn(DayOfWeek.THURSDAY);
+        var boundary = LocalDateTime.of(2026, 7, 27, 20, 0);
+
+        var next = calculator.nextOccurrence(account, LocalTime.of(8, 15), boundary);
+
+        assertEquals(LocalDateTime.of(2026, 7, 30, 8, 15), next);
+        assertTrue(next.isAfter(boundary));
+    }
+
+    @Test
     void twoThirtyBelongsToThePreviousGameDayUntilFourOClock() {
         var scheduledFor = LocalDateTime.of(2026, 7, 28, 2, 30);
+
+        assertTrue(calculator.belongsToCurrentGameDay(scheduledFor,
+                LocalDateTime.of(2026, 7, 28, 3, 59)));
+        assertFalse(calculator.belongsToCurrentGameDay(scheduledFor,
+                LocalDateTime.of(2026, 7, 28, 4, 0)));
+    }
+
+    @Test
+    void lateEveningAndBeforeResetBelongToTheSameGameDay() {
+        var scheduledFor = LocalDateTime.of(2026, 7, 27, 19, 30);
 
         assertTrue(calculator.belongsToCurrentGameDay(scheduledFor,
                 LocalDateTime.of(2026, 7, 28, 3, 59)));

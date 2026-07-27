@@ -20,14 +20,15 @@ public class AccountScheduleCalculator {
         Objects.requireNonNull(account, "account");
         Objects.requireNonNull(time, "time");
         Objects.requireNonNull(strictlyAfter, "strictlyAfter");
-        if (!hasEnabledWeekday(account.getActive())) {
+        var active = account.getActive() == null ? new ActivationDate() : account.getActive();
+        if (!hasEnabledWeekday(active)) {
             throw new IllegalArgumentException("At least one active weekday must be enabled");
         }
 
         var boundary = strictlyAfter.atZone(GameDayClock.ZONE_ID);
         for (int daysAhead = 0; daysAhead <= 7; daysAhead++) {
             var date = boundary.toLocalDate().plusDays(daysAhead);
-            if (!isEnabled(account.getActive(), date.getDayOfWeek())) {
+            if (!isEnabled(active, date.getDayOfWeek())) {
                 continue;
             }
             var candidate = ZonedDateTime.of(date, time, GameDayClock.ZONE_ID);

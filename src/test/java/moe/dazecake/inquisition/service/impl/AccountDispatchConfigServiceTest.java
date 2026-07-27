@@ -12,11 +12,17 @@ import moe.dazecake.inquisition.model.entity.ActivationDateSet.ActivationDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -26,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -71,6 +78,48 @@ class AccountDispatchConfigServiceTest {
     }
 
     @Test
+    void configurationWritesAreTransactional() {
+        var update = requireMethod(AccountDispatchConfigService.class, "update",
+                AccountEntity.class, AccountDispatchConfigDTO.class,
+                boolean.class, LocalDateTime.class);
+        var activatePending = requireMethod(AccountDispatchConfigService.class, "activatePending",
+                AccountEntity.class, LocalDateTime.class);
+
+        assertNotNull(update.getAnnotation(Transactional.class));
+        assertNotNull(activatePending.getAnnotation(Transactional.class));
+    }
+
+    @Test
+    void mapperDefinesAtomicUpsertLockedReadAndNarrowPendingUpdate() {
+        var upsert = requireMethod(AccountDispatchConfigMapper.class, "upsert",
+                AccountDispatchConfigEntity.class);
+        var selectForUpdate = requireMethod(AccountDispatchConfigMapper.class, "selectByIdForUpdate",
+                Long.class);
+        var completePending = requireMethod(AccountDispatchConfigMapper.class,
+                "completePendingActivation", Long.class, LocalTime.class, LocalDateTime.class);
+
+        var insert = upsert.getAnnotation(Insert.class);
+        var select = selectForUpdate.getAnnotation(Select.class);
+        var update = completePending.getAnnotation(Update.class);
+        assertNotNull(insert);
+        assertNotNull(select);
+        assertNotNull(update);
+
+        var upsertSql = normalizedSql(insert.value());
+        assertTrue(upsertSql.contains("INSERT INTO ACCOUNT_DISPATCH_CONFIG"));
+        assertTrue(upsertSql.contains("ON DUPLICATE KEY UPDATE"));
+        assertTrue(upsertSql.contains("UPDATED_AT = CURRENT_TIMESTAMP(6)"));
+        assertTrue(upsertSql.contains("SCHEDULE_TIME"));
+        assertTrue(upsertSql.contains("NEXT_SCHEDULED_AT"));
+
+        assertTrue(normalizedSql(select.value()).contains("FOR UPDATE"));
+        var pendingSql = normalizedSql(update.value());
+        assertTrue(pendingSql.contains("ACTIVATION_PENDING = 0"));
+        assertTrue(pendingSql.contains("ACTIVATION_PENDING = 1"));
+        assertTrue(pendingSql.contains("UPDATED_AT = CURRENT_TIMESTAMP(6)"));
+    }
+
+    @Test
     void missingConfigurationDefaultsToAutoWithoutWriting() {
         when(configMapper.selectById(398L)).thenReturn(null);
 
@@ -85,6 +134,7 @@ class AccountDispatchConfigServiceTest {
         verify(configMapper, times(2)).selectById(398L);
         verify(configMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(configMapper, never()).updateById(org.mockito.ArgumentMatchers.any());
+        verify(configMapper, never()).upsert(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -124,17 +174,17 @@ class AccountDispatchConfigServiceTest {
     }
 
     @Test
-    void insertsScheduledConfigurationWithTheNextFutureOccurrence() {
+    void upsertsScheduledConfigurationWithTheNextFutureOccurrence() {
         var account = accountWithActiveMonday();
-        when(configMapper.selectById(account.getId())).thenReturn(null);
+        when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(1);
 
         service.update(account,
                 request(AccountDispatchConfigService.SCHEDULED, LocalTime.of(19, 30)),
                 false, mondayMorning());
 
         var captor = ArgumentCaptor.forClass(AccountDispatchConfigEntity.class);
-        verify(configMapper).insert(captor.capture());
-        verify(configMapper, never()).updateById(org.mockito.ArgumentMatchers.any());
+        verify(configMapper).upsert(captor.capture());
+        verify(configMapper, never()).selectById(account.getId());
         var saved = captor.getValue();
         assertEquals(account.getId(), saved.getAccountId());
         assertEquals(AccountDispatchConfigService.SCHEDULED, saved.getDispatchMode());
@@ -146,59 +196,70 @@ class AccountDispatchConfigServiceTest {
     }
 
     @Test
-    void activeAssignmentDefersScheduledActivationAndUpdatesTheExistingRow() {
+    void activeAssignmentDefersScheduledActivationThroughAtomicUpsert() {
         var account = accountWithActiveMonday();
-        var existing = new AccountDispatchConfigEntity()
-                .setAccountId(account.getId())
-                .setDispatchMode(AccountDispatchConfigService.AUTO)
-                .setNextScheduledAt(LocalDateTime.of(2026, 7, 20, 19, 30));
-        when(configMapper.selectById(account.getId())).thenReturn(existing);
+        when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(1);
 
         service.update(account,
                 request(AccountDispatchConfigService.SCHEDULED, LocalTime.of(20, 0)),
                 true, mondayMorning());
 
-        verify(configMapper).updateById(existing);
-        verify(configMapper, never()).insert(org.mockito.ArgumentMatchers.any());
-        assertEquals(AccountDispatchConfigService.SCHEDULED, existing.getDispatchMode());
-        assertEquals(LocalTime.of(20, 0), existing.getScheduleTime());
-        assertNull(existing.getNextScheduledAt());
-        assertEquals(1, existing.getActivationPending());
-        assertNull(existing.getCreatedAt());
-        assertNull(existing.getUpdatedAt());
+        var captor = ArgumentCaptor.forClass(AccountDispatchConfigEntity.class);
+        verify(configMapper).upsert(captor.capture());
+        verify(configMapper, never()).selectById(account.getId());
+        var saved = captor.getValue();
+        assertEquals(AccountDispatchConfigService.SCHEDULED, saved.getDispatchMode());
+        assertEquals(LocalTime.of(20, 0), saved.getScheduleTime());
+        assertNull(saved.getNextScheduledAt());
+        assertEquals(1, saved.getActivationPending());
+        assertNull(saved.getCreatedAt());
+        assertNull(saved.getUpdatedAt());
     }
 
     @Test
     void switchingToAutoClearsSchedulingStateImmediatelyWithoutAnAssignment() {
         var account = accountWithActiveMonday();
-        var existing = scheduledConfig(account.getId()).setActivationPending(1);
-        when(configMapper.selectById(account.getId())).thenReturn(existing);
+        when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(1);
 
         service.update(account,
                 request(AccountDispatchConfigService.AUTO, LocalTime.of(8, 0)),
                 false, mondayMorning());
 
-        verify(configMapper).updateById(existing);
-        assertEquals(AccountDispatchConfigService.AUTO, existing.getDispatchMode());
-        assertNull(existing.getScheduleTime());
-        assertNull(existing.getNextScheduledAt());
-        assertEquals(0, existing.getActivationPending());
+        var captor = ArgumentCaptor.forClass(AccountDispatchConfigEntity.class);
+        verify(configMapper).upsert(captor.capture());
+        var saved = captor.getValue();
+        assertEquals(AccountDispatchConfigService.AUTO, saved.getDispatchMode());
+        assertNull(saved.getScheduleTime());
+        assertNull(saved.getNextScheduledAt());
+        assertEquals(0, saved.getActivationPending());
     }
 
     @Test
     void switchingToAutoDuringAnActiveAssignmentMarksActivationPending() {
         var account = accountWithActiveMonday();
-        var existing = scheduledConfig(account.getId());
-        when(configMapper.selectById(account.getId())).thenReturn(existing);
+        when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(1);
 
         service.update(account, request(AccountDispatchConfigService.AUTO, null),
                 true, mondayMorning());
 
-        verify(configMapper).updateById(existing);
-        assertEquals(AccountDispatchConfigService.AUTO, existing.getDispatchMode());
-        assertNull(existing.getScheduleTime());
-        assertNull(existing.getNextScheduledAt());
-        assertEquals(1, existing.getActivationPending());
+        var captor = ArgumentCaptor.forClass(AccountDispatchConfigEntity.class);
+        verify(configMapper).upsert(captor.capture());
+        var saved = captor.getValue();
+        assertEquals(AccountDispatchConfigService.AUTO, saved.getDispatchMode());
+        assertNull(saved.getScheduleTime());
+        assertNull(saved.getNextScheduledAt());
+        assertEquals(1, saved.getActivationPending());
+    }
+
+    @Test
+    void updateFailsWhenAtomicUpsertAffectsNoRows() {
+        var account = accountWithActiveMonday();
+        when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(0);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.update(account,
+                        request(AccountDispatchConfigService.SCHEDULED, LocalTime.of(19, 30)),
+                        false, mondayMorning()));
     }
 
     @Test
@@ -207,13 +268,16 @@ class AccountDispatchConfigServiceTest {
         var existing = scheduledConfig(account.getId())
                 .setNextScheduledAt(null)
                 .setActivationPending(1);
-        when(configMapper.selectById(account.getId())).thenReturn(existing);
+        var next = LocalDateTime.of(2026, 8, 3, 19, 30);
+        when(configMapper.selectByIdForUpdate(account.getId())).thenReturn(existing);
+        when(configMapper.completePendingActivation(account.getId(), LocalTime.of(19, 30), next))
+                .thenReturn(1);
 
         service.activatePending(account, LocalDateTime.of(2026, 7, 27, 19, 30));
 
-        verify(configMapper).updateById(existing);
-        assertEquals(0, existing.getActivationPending());
-        assertEquals(LocalDateTime.of(2026, 8, 3, 19, 30), existing.getNextScheduledAt());
+        verify(configMapper).selectByIdForUpdate(account.getId());
+        verify(configMapper).completePendingActivation(account.getId(), LocalTime.of(19, 30), next);
+        verify(configMapper, never()).updateById(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -225,25 +289,68 @@ class AccountDispatchConfigServiceTest {
                 .setScheduleTime(LocalTime.of(19, 30))
                 .setNextScheduledAt(LocalDateTime.of(2026, 8, 3, 19, 30))
                 .setActivationPending(1);
-        when(configMapper.selectById(account.getId())).thenReturn(existing);
+        when(configMapper.selectByIdForUpdate(account.getId())).thenReturn(existing);
+        when(configMapper.completePendingActivation(account.getId(), null, null)).thenReturn(1);
 
         service.activatePending(account, mondayMorning());
 
-        verify(configMapper).updateById(existing);
-        assertEquals(0, existing.getActivationPending());
-        assertNull(existing.getScheduleTime());
-        assertNull(existing.getNextScheduledAt());
+        verify(configMapper).selectByIdForUpdate(account.getId());
+        verify(configMapper).completePendingActivation(account.getId(), null, null);
+        verify(configMapper, never()).updateById(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void activatePendingFailsWhenNarrowUpdateAffectsNoRows() {
+        var account = accountWithActiveMonday();
+        var existing = scheduledConfig(account.getId()).setActivationPending(1);
+        var next = LocalDateTime.of(2026, 7, 27, 19, 30);
+        when(configMapper.selectByIdForUpdate(account.getId())).thenReturn(existing);
+        when(configMapper.completePendingActivation(account.getId(), LocalTime.of(19, 30), next))
+                .thenReturn(0);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.activatePending(account, mondayMorning()));
+    }
+
+    @Test
+    void activatePendingReportsCorruptPersistedModeAsStateFailure() {
+        var account = accountWithActiveMonday();
+        var existing = scheduledConfig(account.getId())
+                .setDispatchMode("BROKEN")
+                .setActivationPending(1);
+        when(configMapper.selectByIdForUpdate(account.getId())).thenReturn(existing);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.activatePending(account, mondayMorning()));
+        verify(configMapper, never()).completePendingActivation(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void activatePendingReportsMissingPersistedScheduleTimeAsStateFailure() {
+        var account = accountWithActiveMonday();
+        var existing = scheduledConfig(account.getId())
+                .setScheduleTime(null)
+                .setActivationPending(1);
+        when(configMapper.selectByIdForUpdate(account.getId())).thenReturn(existing);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.activatePending(account, mondayMorning()));
     }
 
     @Test
     void activatePendingIgnoresConfigurationThatIsNotPending() {
         var account = accountWithActiveMonday();
         var existing = scheduledConfig(account.getId()).setActivationPending(0);
-        when(configMapper.selectById(account.getId())).thenReturn(existing);
+        when(configMapper.selectByIdForUpdate(account.getId())).thenReturn(existing);
 
         service.activatePending(account, mondayMorning());
 
-        verify(configMapper, never()).updateById(org.mockito.ArgumentMatchers.any());
+        verify(configMapper).selectByIdForUpdate(account.getId());
+        verify(configMapper, never()).completePendingActivation(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
     }
 
     private AccountDispatchConfigDTO request(String mode, LocalTime time) {
@@ -266,6 +373,23 @@ class AccountDispatchConfigServiceTest {
         assertNotNull(tableField, fieldName + " must remain database managed");
         assertEquals(FieldStrategy.NEVER, tableField.insertStrategy());
         assertEquals(FieldStrategy.NEVER, tableField.updateStrategy());
+    }
+
+    private Method requireMethod(Class<?> type, String name, Class<?>... parameterTypes) {
+        var method = Arrays.stream(type.getMethods())
+                .filter(candidate -> candidate.getName().equals(name))
+                .filter(candidate -> Arrays.equals(candidate.getParameterTypes(), parameterTypes))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(method, type.getSimpleName() + "." + name + " contract is required");
+        return method;
+    }
+
+    private String normalizedSql(String[] fragments) {
+        return String.join(" ", fragments)
+                .replaceAll("\\s+", " ")
+                .trim()
+                .toUpperCase(Locale.ROOT);
     }
 
     private AccountEntity accountWithActiveMonday() {

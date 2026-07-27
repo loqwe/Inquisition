@@ -5,9 +5,11 @@ import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.Objects;
 
 @Service
@@ -37,6 +39,7 @@ public class AccountDispatchConfigService {
         return AUTO.equals(getOrDefault(accountId).getDispatchMode());
     }
 
+    @Transactional
     public void update(AccountEntity account, AccountDispatchConfigDTO request,
                        boolean assignmentActive, LocalDateTime now) {
         Objects.requireNonNull(account, "account");
@@ -52,40 +55,44 @@ public class AccountDispatchConfigService {
             nextScheduledAt = calculator.nextOccurrence(account, request.getScheduleTime(), now);
         }
 
-        var config = configMapper.selectById(account.getId());
-        var exists = config != null;
-        if (!exists) {
-            config = new AccountDispatchConfigEntity().setAccountId(account.getId());
-        }
-        config.setDispatchMode(mode)
+        var config = new AccountDispatchConfigEntity()
+                .setAccountId(account.getId())
+                .setDispatchMode(mode)
                 .setScheduleTime(SCHEDULED.equals(mode) ? request.getScheduleTime() : null)
                 .setNextScheduledAt(assignmentActive ? null : nextScheduledAt)
                 .setActivationPending(assignmentActive ? 1 : 0);
-        save(config, exists);
+        if (configMapper.upsert(config) <= 0) {
+            throw new IllegalStateException("Unable to persist account dispatch configuration");
+        }
     }
 
+    @Transactional
     public void activatePending(AccountEntity account, LocalDateTime now) {
         Objects.requireNonNull(account, "account");
         Objects.requireNonNull(account.getId(), "account.id");
         Objects.requireNonNull(now, "now");
-        var config = configMapper.selectById(account.getId());
+        var config = configMapper.selectByIdForUpdate(account.getId());
         if (config == null || !Integer.valueOf(1).equals(config.getActivationPending())) {
             return;
         }
 
-        var mode = validatedMode(config.getDispatchMode());
+        var mode = validatedPersistedMode(config.getDispatchMode());
+        LocalTime scheduleTime = null;
         LocalDateTime nextScheduledAt = null;
         if (SCHEDULED.equals(mode)) {
             if (config.getScheduleTime() == null) {
-                throw new IllegalArgumentException("scheduleTime is required for SCHEDULED mode");
+                throw new IllegalStateException("Persisted SCHEDULED configuration has no scheduleTime");
             }
-            nextScheduledAt = calculator.nextOccurrence(account, config.getScheduleTime(), now);
-        } else {
-            config.setScheduleTime(null);
+            scheduleTime = config.getScheduleTime();
+            try {
+                nextScheduledAt = calculator.nextOccurrence(account, scheduleTime, now);
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalStateException("Persisted dispatch configuration is invalid", exception);
+            }
         }
-        config.setNextScheduledAt(nextScheduledAt)
-                .setActivationPending(0);
-        configMapper.updateById(config);
+        if (configMapper.completePendingActivation(account.getId(), scheduleTime, nextScheduledAt) != 1) {
+            throw new IllegalStateException("Unable to activate pending account dispatch configuration");
+        }
     }
 
     private String validatedMode(AccountDispatchConfigDTO request) {
@@ -102,11 +109,11 @@ public class AccountDispatchConfigService {
         return mode;
     }
 
-    private void save(AccountDispatchConfigEntity config, boolean exists) {
-        if (exists) {
-            configMapper.updateById(config);
-        } else {
-            configMapper.insert(config);
+    private String validatedPersistedMode(String mode) {
+        try {
+            return validatedMode(mode);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalStateException("Persisted dispatch configuration is invalid", exception);
         }
     }
 }
