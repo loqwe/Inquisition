@@ -41,5 +41,6 @@ public class Daily {
     private boolean credit = true;
     private boolean task = true;
     private boolean activity = true;
+    private Boolean shopping;
 
 }

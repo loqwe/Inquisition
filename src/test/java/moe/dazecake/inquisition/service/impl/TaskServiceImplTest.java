@@ -5,14 +5,19 @@ import moe.dazecake.inquisition.mapper.DeviceMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
+import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Fight;
 import moe.dazecake.inquisition.model.local.WorkUser;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.GameDayClock;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Optional;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -109,6 +114,48 @@ class TaskServiceImplTest {
     }
 
     @Test
+    void normalTaskEndingWithoutALoginReturnsItsRunningUrgencyToTheFrontQueue() {
+        var service = taskCompletionService();
+        var assignment = assignment("assignment-normal").setTaskMode(TaskAssignmentService.MODE_NORMAL);
+        var urgent = new UrgentTaskEntity().setId(12L).setAccountId(398L)
+                .setStatus(UrgentTaskService.STATUS_RUNNING);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
+        when(service.taskAssignmentService.matchesSubmission(assignment, "device-1", "assignment-normal"))
+                .thenReturn(true);
+        when(service.taskAssignmentService.closeAssignment(
+                assignment, "COMPLETED", "device reported completion", false)).thenReturn(true);
+        when(service.urgentTaskService.findActiveByAccount(eq(398L), any())).thenReturn(Optional.of(urgent));
+
+        var result = service.completeTask("device-1", "assignment-normal", null);
+
+        assertEquals(200, result.getCode());
+        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.urgentTaskService).markWaiting(eq(12L), any(LocalDateTime.class));
+    }
+
+    @Test
+    void staleLoginOnlyCompletionCannotFallThroughAsACompletedDailyTask() {
+        var service = taskCompletionService();
+        var assignment = assignment("assignment-stale-login")
+                .setTaskMode(UrgentTaskService.MODE_LOGIN_ONLY)
+                .setUrgentTaskId(12L);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
+        when(service.taskAssignmentService.matchesSubmission(
+                assignment, "device-1", "assignment-stale-login")).thenReturn(true);
+        when(service.urgentTaskService.findActiveByAccount(eq(398L), any())).thenReturn(Optional.empty());
+        when(service.taskAssignmentService.closeAssignment(
+                assignment, "STALE_LOGIN_ONLY", "urgent game day ended", true)).thenReturn(true);
+
+        var result = service.completeTask("device-1", "assignment-stale-login", null);
+
+        assertEquals(200, result.getCode());
+        verify(service.taskAssignmentService).closeAssignment(
+                assignment, "STALE_LOGIN_ONLY", "urgent game day ended", true);
+        verify(service.messageService, never()).push(any(AccountEntity.class), contains("任务完成"), any());
+        verify(service.sanityOcrService, never()).submit(any(), any(), any());
+    }
+
+    @Test
     void completedTaskSubmitsItsScreenshotForAsynchronousSanityOcr() {
         var service = taskCompletionService();
         var assignment = assignment("assignment-current");
@@ -124,6 +171,35 @@ class TaskServiceImplTest {
         assertEquals(200, result.getCode());
         verify(service.sanityOcrService).submit(eq(398L),
                 eq("https://inquisition-img.example/one.png"), any(LocalDateTime.class));
+    }
+
+    @Test
+    void loginOnlyCompletionWithoutSuccessfulLoginLogEntersRetryInsteadOfCompleting() {
+        var service = taskCompletionService();
+        var assignment = assignment("assignment-login")
+                .setTaskMode(UrgentTaskService.MODE_LOGIN_ONLY)
+                .setUrgentTaskId(11L);
+        var urgent = new UrgentTaskEntity().setId(11L).setAccountId(398L)
+                .setGameDay(GameDayClock.gameDay(LocalDateTime.now()))
+                .setStatus(UrgentTaskService.STATUS_RUNNING);
+        var retryUntil = LocalDateTime.now().plusMinutes(10);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
+        when(service.taskAssignmentService.matchesSubmission(assignment, "device-1", "assignment-login"))
+                .thenReturn(true);
+        when(service.urgentTaskService.findActiveByAccount(eq(398L), any())).thenReturn(Optional.of(urgent));
+        when(service.taskAssignmentService.closeAssignment(assignment, "FAILED",
+                "login-only completed without successful login", false)).thenReturn(true);
+        when(service.accountRuntimeService.recordFailure(any(AccountEntity.class), eq("device-1"),
+                eq("LOGIN_NOT_CONFIRMED"), any(LocalDateTime.class))).thenReturn(retryUntil);
+
+        var result = service.completeTask("device-1", "assignment-login", null);
+
+        assertEquals(200, result.getCode());
+        assertEquals(retryUntil, service.dynamicInfo.getFreezeUserInfoMap().get(398L));
+        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.urgentTaskService).markRetry(eq(urgent), eq("LOGIN_NOT_CONFIRMED"),
+                eq(retryUntil), any(LocalDateTime.class));
+        verify(service.sanityOcrService, never()).submit(any(), any(), any());
     }
 
     @Test
@@ -157,6 +233,9 @@ class TaskServiceImplTest {
                 eq("network"), any(LocalDateTime.class))).thenReturn(retryUntil);
         when(service.deviceRuntimeService.recordTaskFailure(eq("device-1"), any(LocalDateTime.class)))
                 .thenReturn(false);
+        var urgent = new UrgentTaskEntity().setId(11L).setAccountId(398L)
+                .setStatus(UrgentTaskService.STATUS_RUNNING);
+        when(service.urgentTaskService.findActiveByAccount(eq(398L), any())).thenReturn(Optional.of(urgent));
 
         var result = service.failTask("device-1", "assignment-current", "network", null);
 
@@ -166,6 +245,8 @@ class TaskServiceImplTest {
         assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
         verify(service.accountRuntimeService).recordFailure(any(AccountEntity.class), eq("device-1"),
                 eq("network"), any(LocalDateTime.class));
+        verify(service.urgentTaskService).markRetry(eq(urgent), eq("network"), eq(retryUntil),
+                any(LocalDateTime.class));
     }
 
     @Test
@@ -214,6 +295,7 @@ class TaskServiceImplTest {
         service.accountMapper = mock(AccountMapper.class);
         service.deviceRuntimeService = mock(DeviceRuntimeService.class);
         service.taskAssignmentService = mock(TaskAssignmentService.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
         when(service.deviceMapper.selectOne(any())).thenReturn(new DeviceEntity()
                 .setDeviceToken("device-1").setDelete(0));
         when(service.deviceRuntimeService.hasFreshHeartbeat(eq("device-1"), any(LocalDateTime.class)))
@@ -234,6 +316,7 @@ class TaskServiceImplTest {
         service.accountMapper = mock(AccountMapper.class);
         service.deviceRuntimeService = mock(DeviceRuntimeService.class);
         service.taskAssignmentService = mock(TaskAssignmentService.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
         when(service.deviceMapper.selectOne(any())).thenReturn(new DeviceEntity()
                 .setDeviceToken("device-1").setDelete(0));
         when(service.deviceRuntimeService.hasFreshHeartbeat(eq("device-1"), any(LocalDateTime.class)))
@@ -245,6 +328,59 @@ class TaskServiceImplTest {
         assertEquals(200, result.getCode());
         assertEquals("待分配队列为空", result.getMsg());
         verify(service.taskAssignmentService).findByDevice("device-1");
+    }
+
+    @Test
+    void twentySixUrgentTasksStayAheadOfAdministratorInsertedNormalTasks() {
+        var service = new TaskServiceImpl();
+        service.dynamicInfo = new DynamicInfo();
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dynamicInfo.setWaitUserList(new ArrayList<>(List.of(99L, 7L, 8L)));
+        var now = LocalDateTime.of(2026, 7, 28, 2, 10);
+        when(service.urgentTaskService.findDispatchable(any(), eq(now))).thenReturn(List.of(
+                new UrgentTaskEntity().setId(11L).setAccountId(7L)
+                        .setStatus(UrgentTaskService.STATUS_WAITING)
+                        .setTaskMode(UrgentTaskService.MODE_LOGIN_ONLY)
+                        .setPriority(UrgentTaskService.PRIORITY_TWENTY_SIX)));
+
+        var urgentByAccount = service.promoteReadyUrgentTasks(now);
+
+        assertEquals(List.of(7L, 99L, 8L), service.dynamicInfo.getWaitUserList());
+        assertEquals(11L, urgentByAccount.get(7L).getId());
+    }
+
+    @Test
+    void loginOnlyPayloadKeepsDailyProtocolAndDoesNotMutateStoredConfiguration() {
+        var service = new TaskServiceImpl();
+        var storedConfig = new ConfigEntity();
+        storedConfig.getDaily().setFight(new ArrayList<>(List.of(new Fight("1-7", 3))));
+        storedConfig.getDaily().setMail(true);
+        storedConfig.getDaily().setFriend(true);
+        storedConfig.getDaily().setCredit(true);
+        storedConfig.getDaily().setTask(true);
+        storedConfig.getDaily().setActivity(true);
+        var account = new AccountEntity().setId(7L).setTaskType("daily").setConfig(storedConfig);
+        var assignment = new TaskAssignmentEntity().setAssignmentId("assignment-login")
+                .setTaskMode(UrgentTaskService.MODE_LOGIN_ONLY).setUrgentTaskId(11L);
+
+        var payload = service.buildTaskAccountDTO(account, assignment);
+
+        assertEquals("daily", payload.getTaskType());
+        assertEquals("assignment-login", payload.getAssignmentId());
+        assertTrue(payload.getConfig().getDaily().getFight().isEmpty());
+        assertTrue(payload.getConfig().getDaily().getPlan().isEmpty());
+        assertTrue(!payload.getConfig().getDaily().isMail());
+        assertTrue(!payload.getConfig().getDaily().isFriend());
+        assertTrue(!payload.getConfig().getDaily().isCredit());
+        assertTrue(!payload.getConfig().getDaily().isTask());
+        assertTrue(!payload.getConfig().getDaily().isActivity());
+        assertEquals(Boolean.FALSE, payload.getConfig().getDaily().getShopping());
+        assertTrue(!payload.getConfig().getDaily().getInfrastructure().isHarvest());
+        assertTrue(!payload.getConfig().getDaily().getOffer().isEnable());
+
+        assertEquals(1, storedConfig.getDaily().getFight().size());
+        assertTrue(storedConfig.getDaily().isMail());
+        assertTrue(storedConfig.getDaily().isFriend());
     }
 
     @Test
@@ -275,6 +411,7 @@ class TaskServiceImplTest {
         service.deviceRuntimeService = mock(DeviceRuntimeService.class);
         service.accountRuntimeService = mock(AccountRuntimeService.class);
         service.sanityOcrService = mock(SanityOcrService.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
         when(service.accountMapper.selectById(398L)).thenReturn(new AccountEntity()
                 .setId(398L)
                 .setName("账号774")

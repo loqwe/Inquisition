@@ -22,6 +22,7 @@ import java.util.UUID;
 @Service
 public class TaskAssignmentService {
     public static final long HARD_LEASE_HOURS = 2;
+    public static final String MODE_NORMAL = "NORMAL";
 
     @Resource
     TaskAssignmentMapper assignmentMapper;
@@ -32,13 +33,24 @@ public class TaskAssignmentService {
     @Resource
     DynamicInfo dynamicInfo;
 
+    @Resource
+    UrgentTaskService urgentTaskService;
+
     @Transactional
     public TaskAssignmentEntity createAssignment(AccountEntity account, String deviceToken, LocalDateTime now) {
+        return createAssignment(account, deviceToken, now, MODE_NORMAL, null);
+    }
+
+    @Transactional
+    public TaskAssignmentEntity createAssignment(AccountEntity account, String deviceToken, LocalDateTime now,
+                                                 String taskMode, Long urgentTaskId) {
         var assignment = new TaskAssignmentEntity()
                 .setAssignmentId(UUID.randomUUID().toString())
                 .setAccountId(account.getId())
                 .setDeviceToken(deviceToken)
                 .setTaskType(account.getTaskType())
+                .setTaskMode(taskMode == null || taskMode.isBlank() ? MODE_NORMAL : taskMode)
+                .setUrgentTaskId(urgentTaskId)
                 .setAssignedAt(now)
                 .setLeaseExpiresAt(now.plusHours(HARD_LEASE_HOURS))
                 .setLastProgressAt(now)
@@ -179,11 +191,14 @@ public class TaskAssignmentService {
         if (assignment == null || assignmentMapper.deleteById(assignment.getAssignmentId()) != 1) {
             return false;
         }
+        var closedAt = GameDayClock.now();
         var history = new TaskAssignmentHistoryEntity()
                 .setAssignmentId(assignment.getAssignmentId())
                 .setAccountId(assignment.getAccountId())
                 .setDeviceToken(assignment.getDeviceToken())
                 .setTaskType(assignment.getTaskType())
+                .setTaskMode(assignment.getTaskMode())
+                .setUrgentTaskId(assignment.getUrgentTaskId())
                 .setStatus(status)
                 .setAssignedAt(assignment.getAssignedAt())
                 .setLeaseExpiresAt(assignment.getLeaseExpiresAt())
@@ -194,7 +209,7 @@ public class TaskAssignmentService {
                 .setRetryCount(assignment.getRetryCount())
                 .setLongTaskNotified(assignment.getLongTaskNotified())
                 .setReason(reason)
-                .setFinishedAt(GameDayClock.now());
+                .setFinishedAt(closedAt);
         if (historyMapper.insert(history) != 1) {
             throw new IllegalStateException("Unable to archive task assignment");
         }
@@ -204,6 +219,14 @@ public class TaskAssignmentService {
                 if (!dynamicInfo.getWaitUserList().contains(assignment.getAccountId())) {
                     dynamicInfo.getWaitUserList().add(assignment.getAccountId());
                 }
+            }
+            if (assignment.getUrgentTaskId() != null) {
+                urgentTaskService.markWaiting(assignment.getUrgentTaskId(), closedAt);
+            } else {
+                urgentTaskService.findActiveByAccount(
+                                assignment.getAccountId(), GameDayClock.gameDay(closedAt))
+                        .filter(task -> UrgentTaskService.STATUS_RUNNING.equals(task.getStatus()))
+                        .ifPresent(task -> urgentTaskService.markWaiting(task.getId(), closedAt));
             }
         }
         return true;

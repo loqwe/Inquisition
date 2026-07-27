@@ -5,17 +5,20 @@ import moe.dazecake.inquisition.mapper.TaskAssignmentMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentHistoryEntity;
+import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -28,6 +31,7 @@ class TaskAssignmentServiceTest {
         var service = new TaskAssignmentService();
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
         when(service.assignmentMapper.insert(any(TaskAssignmentEntity.class))).thenReturn(1);
 
@@ -42,6 +46,25 @@ class TaskAssignmentServiceTest {
         assertEquals(assignment.getAssignmentId(),
                 service.dynamicInfo.getWorkUserInfoMap().get(398L).getAssignmentId());
         verify(service.assignmentMapper).insert(assignment);
+    }
+
+    @Test
+    void persistsTheInternalLoginOnlyModeWithoutChangingTheLegacyTaskType() {
+        var service = new TaskAssignmentService();
+        service.assignmentMapper = mock(TaskAssignmentMapper.class);
+        service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dynamicInfo = new DynamicInfo();
+        when(service.assignmentMapper.insert(any(TaskAssignmentEntity.class))).thenReturn(1);
+        var now = LocalDateTime.of(2026, 7, 28, 2, 5);
+        var account = new AccountEntity().setId(7L).setTaskType("daily");
+
+        var assignment = service.createAssignment(account, "device-1", now,
+                UrgentTaskService.MODE_LOGIN_ONLY, 11L);
+
+        assertEquals("daily", assignment.getTaskType());
+        assertEquals(UrgentTaskService.MODE_LOGIN_ONLY, assignment.getTaskMode());
+        assertEquals(11L, assignment.getUrgentTaskId());
     }
 
     @Test
@@ -64,6 +87,7 @@ class TaskAssignmentServiceTest {
         var service = new TaskAssignmentService();
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
         when(service.assignmentMapper.deleteById("assignment-1")).thenReturn(1);
         when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
@@ -74,6 +98,8 @@ class TaskAssignmentServiceTest {
                 .setAccountId(398L)
                 .setDeviceToken("device-1")
                 .setTaskType("daily")
+                .setTaskMode(UrgentTaskService.MODE_LOGIN_ONLY)
+                .setUrgentTaskId(11L)
                 .setAssignedAt(assignedAt)
                 .setLeaseExpiresAt(assignedAt.plusHours(2))
                 .setLastProgressAt(assignedAt.plusMinutes(10))
@@ -85,7 +111,38 @@ class TaskAssignmentServiceTest {
 
         assertFalse(service.dynamicInfo.getWorkUserList().contains(398L));
         assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
-        verify(service.historyMapper).insert(any(TaskAssignmentHistoryEntity.class));
+        var historyCaptor = ArgumentCaptor.forClass(TaskAssignmentHistoryEntity.class);
+        verify(service.historyMapper).insert(historyCaptor.capture());
+        assertEquals(UrgentTaskService.MODE_LOGIN_ONLY, historyCaptor.getValue().getTaskMode());
+        assertEquals(11L, historyCaptor.getValue().getUrgentTaskId());
+        verify(service.urgentTaskService).markWaiting(eq(11L), any(LocalDateTime.class));
+    }
+
+    @Test
+    void requeueingANormalAssignmentReleasesTheRunningUrgencyCreatedByTheTwoOClockSweep() {
+        var service = new TaskAssignmentService();
+        service.assignmentMapper = mock(TaskAssignmentMapper.class);
+        service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dynamicInfo = new DynamicInfo();
+        when(service.assignmentMapper.deleteById("assignment-normal")).thenReturn(1);
+        when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
+        var urgent = new UrgentTaskEntity().setId(12L).setAccountId(398L)
+                .setStatus(UrgentTaskService.STATUS_RUNNING);
+        when(service.urgentTaskService.findActiveByAccount(eq(398L), any())).thenReturn(Optional.of(urgent));
+        var assignment = new TaskAssignmentEntity()
+                .setAssignmentId("assignment-normal")
+                .setAccountId(398L)
+                .setDeviceToken("device-1")
+                .setTaskType("daily")
+                .setTaskMode(TaskAssignmentService.MODE_NORMAL)
+                .setAssignedAt(LocalDateTime.of(2026, 7, 28, 1, 50))
+                .setLeaseExpiresAt(LocalDateTime.of(2026, 7, 28, 3, 50));
+
+        assertTrue(service.closeAssignment(assignment, "REVOKED", "device offline", true));
+
+        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.urgentTaskService).markWaiting(eq(12L), any(LocalDateTime.class));
     }
 
     @Test
@@ -172,6 +229,7 @@ class TaskAssignmentServiceTest {
         var service = new TaskAssignmentService();
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
         var now = LocalDateTime.of(2026, 7, 19, 13, 0);
         var assignment = new TaskAssignmentEntity()

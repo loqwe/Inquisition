@@ -43,7 +43,7 @@ import moe.dazecake.inquisition.model.local.ScheduledTaskDefinition;
 class DynamicScheduleTaskTest {
 
     @Test
-    void registersAllTwelveCronTasksThroughTheMonitor() {
+    void registersAllFifteenCronTasksThroughTheMonitor() {
         var scheduler = new DynamicScheduleTask();
         scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
         var registrar = new ScheduledTaskRegistrar();
@@ -51,16 +51,17 @@ class DynamicScheduleTaskTest {
         scheduler.configureTasks(registrar);
 
         var definitionCaptor = ArgumentCaptor.forClass(ScheduledTaskDefinition.class);
-        verify(scheduler.scheduledTaskMonitor, times(12)).register(definitionCaptor.capture());
+        verify(scheduler.scheduledTaskMonitor, times(15)).register(definitionCaptor.capture());
         assertEquals(List.of(
                         "queue-maintenance", "sanity-refresh", "device-heartbeat-scan",
                         "assignment-timeout-scan", "account-expiry-reminder", "frozen-account-reminder",
                         "daily-refresh-reset", "missing-log-audit", "auto-device-management",
-                        "admin-summary-dispatch", "abnormal-account-repair", "daily-login-sweep"),
+                        "admin-summary-dispatch", "abnormal-account-repair", "daily-login-sweep",
+                        "final-login-sweep", "final-login-summary", "urgent-login-cleanup"),
                 definitionCaptor.getAllValues().stream()
                         .map(ScheduledTaskDefinition::getKey)
                         .collect(Collectors.toList()));
-        assertEquals(12, registrar.getTriggerTaskList().size());
+        assertEquals(15, registrar.getTriggerTaskList().size());
     }
 
     @Test
@@ -73,9 +74,27 @@ class DynamicScheduleTaskTest {
         var context = new SimpleTriggerContext(lastRun, lastRun, lastRun);
         var tasks = registrar.getTriggerTaskList();
 
-        var nextRun = tasks.get(tasks.size() - 1).getTrigger().nextExecutionTime(context);
+        var nextRun = tasks.get(11).getTrigger().nextExecutionTime(context);
 
         assertEquals(Instant.parse("2026-07-27T06:00:00Z"), nextRun.toInstant());
+    }
+
+    @Test
+    void finalLoginTasksRunAtTwoThreeFortyFiveAndFourInShanghai() {
+        var scheduler = new DynamicScheduleTask();
+        scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
+        var registrar = new ScheduledTaskRegistrar();
+        scheduler.configureTasks(registrar);
+        var lastRun = Date.from(Instant.parse("2026-07-27T17:00:00Z"));
+        var context = new SimpleTriggerContext(lastRun, lastRun, lastRun);
+        var tasks = registrar.getTriggerTaskList();
+
+        assertEquals(Instant.parse("2026-07-27T18:00:00Z"),
+                tasks.get(12).getTrigger().nextExecutionTime(context).toInstant());
+        assertEquals(Instant.parse("2026-07-27T19:45:00Z"),
+                tasks.get(13).getTrigger().nextExecutionTime(context).toInstant());
+        assertEquals(Instant.parse("2026-07-27T20:00:00Z"),
+                tasks.get(14).getTrigger().nextExecutionTime(context).toInstant());
     }
 
     @Test

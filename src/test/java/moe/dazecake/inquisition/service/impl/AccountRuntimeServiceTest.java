@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,6 +53,7 @@ class AccountRuntimeServiceTest {
         service.logMapper = mock(LogMapper.class);
         service.dynamicInfo = new DynamicInfo();
         service.messageService = mock(MessageServiceImpl.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
         var time = LocalDateTime.of(2026, 7, 19, 13, 0);
         var log = new LogEntity().setAccountId(398L).setFrom("device-1")
                 .setLevel("INFO").setTitle("登录成功").setDetail("登录成功").setTime(time);
@@ -64,6 +66,66 @@ class AccountRuntimeServiceTest {
         verify(service.taskAssignmentService).recordProgress("device-1", null,
                 "INFO", "登录成功", "登录成功");
         verify(service.runtimeMapper).insert(any(AccountRuntimeEntity.class));
+    }
+
+    @Test
+    void successfulLoginClosesOnlyTheTwentySixLoginOnlyAssignmentAndRequeuesNormally() {
+        var service = new AccountRuntimeService();
+        service.runtimeMapper = mock(AccountRuntimeMapper.class);
+        service.taskAssignmentService = mock(TaskAssignmentService.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.accountMapper = mock(AccountMapper.class);
+        service.logMapper = mock(LogMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.messageService = mock(MessageServiceImpl.class);
+        var time = LocalDateTime.of(2026, 7, 28, 2, 15);
+        var assignment = new TaskAssignmentEntity().setAssignmentId("assignment-login")
+                .setAccountId(398L).setDeviceToken("device-1")
+                .setTaskMode(UrgentTaskService.MODE_LOGIN_ONLY).setUrgentTaskId(11L);
+        var urgent = new moe.dazecake.inquisition.model.entity.UrgentTaskEntity()
+                .setId(11L).setAccountId(398L).setGameDay(LocalDate.of(2026, 7, 27));
+        var log = new LogEntity().setAccountId(398L).setFrom("device-1")
+                .setAssignmentId("assignment-login").setLevel("INFO")
+                .setTitle("登录成功").setDetail("已成功登录至游戏").setTime(time);
+        when(service.taskAssignmentService.recordProgress("device-1", "assignment-login",
+                "INFO", "登录成功", "已成功登录至游戏")).thenReturn(true);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
+        when(service.urgentTaskService.completeForSuccessfulLogin(
+                398L, LocalDate.of(2026, 7, 27), time)).thenReturn(Optional.of(urgent));
+        when(service.taskAssignmentService.closeAssignment(assignment, "LOGIN_CONFIRMED",
+                "twenty-six login confirmed", true)).thenReturn(true);
+
+        assertTrue(service.onLog(log, false));
+
+        verify(service.taskAssignmentService).closeAssignment(assignment, "LOGIN_CONFIRMED",
+                "twenty-six login confirmed", true);
+    }
+
+    @Test
+    void successfulLoginCancelsUrgencyWithoutInterruptingAnExistingNormalDailyTask() {
+        var service = new AccountRuntimeService();
+        service.runtimeMapper = mock(AccountRuntimeMapper.class);
+        service.taskAssignmentService = mock(TaskAssignmentService.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.accountMapper = mock(AccountMapper.class);
+        service.logMapper = mock(LogMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.messageService = mock(MessageServiceImpl.class);
+        var time = LocalDateTime.of(2026, 7, 28, 2, 15);
+        var assignment = new TaskAssignmentEntity().setAssignmentId("assignment-daily")
+                .setAccountId(398L).setDeviceToken("device-1").setTaskMode(TaskAssignmentService.MODE_NORMAL);
+        var urgent = new moe.dazecake.inquisition.model.entity.UrgentTaskEntity().setId(11L).setAccountId(398L);
+        var log = new LogEntity().setAccountId(398L).setFrom("device-1")
+                .setAssignmentId("assignment-daily").setLevel("INFO")
+                .setTitle("登录成功").setDetail("已成功登录至游戏").setTime(time);
+        when(service.taskAssignmentService.recordProgress(any(), any(), any(), any(), any())).thenReturn(true);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
+        when(service.urgentTaskService.completeForSuccessfulLogin(any(), any(), any()))
+                .thenReturn(Optional.of(urgent));
+
+        assertTrue(service.onLog(log, false));
+
+        verify(service.taskAssignmentService, never()).closeAssignment(any(), any(), any(), any(Boolean.class));
     }
 
     @Test

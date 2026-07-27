@@ -19,6 +19,8 @@ public class TaskAssignmentEntity {
     private Long accountId;
     private String deviceToken;
     private String taskType;
+    private String taskMode = "NORMAL";
+    private Long urgentTaskId;
     private LocalDateTime assignedAt;
     private LocalDateTime leaseExpiresAt;
     private LocalDateTime lastProgressAt;

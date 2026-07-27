@@ -11,6 +11,11 @@ import moe.dazecake.inquisition.model.dto.log.AddLogDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
+import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Infrastructure;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Offer;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Sanity;
 import moe.dazecake.inquisition.model.local.UserSan;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.service.intf.TaskService;
@@ -27,8 +32,11 @@ import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Calendar;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -67,6 +75,9 @@ public class TaskServiceImpl implements TaskService {
     @Resource
     SanityOcrService sanityOcrService;
 
+    @Resource
+    UrgentTaskService urgentTaskService;
+
     @Value("${spring.mail.enable:false}")
     boolean enableMail;
 
@@ -76,16 +87,51 @@ public class TaskServiceImpl implements TaskService {
     @Value("${wx-pusher.enable:false}")
     boolean enableWxPusher;
 
-    private AccountDTO buildTaskAccountDTO(AccountEntity account) {
-        return buildTaskAccountDTO(account, null);
+    AccountDTO buildTaskAccountDTO(AccountEntity account, TaskAssignmentEntity assignment) {
+        var dto = AccountConvert.INSTANCE.toAccountDTO(account);
+        dto.setAssignmentId(assignment == null ? null : assignment.getAssignmentId());
+        if (assignment != null && UrgentTaskService.MODE_LOGIN_ONLY.equals(assignment.getTaskMode())) {
+            dto.setTaskType("daily");
+            dto.setConfig(loginOnlyConfig());
+        } else {
+            DailyPlanUtil.normalizeDailyPlan(dto);
+            DailyPlanUtil.compileDailyPlanForDevice(dto);
+        }
+        return dto;
     }
 
-    private AccountDTO buildTaskAccountDTO(AccountEntity account, String assignmentId) {
-        var dto = AccountConvert.INSTANCE.toAccountDTO(account);
-        dto.setAssignmentId(assignmentId);
-        DailyPlanUtil.normalizeDailyPlan(dto);
-        DailyPlanUtil.compileDailyPlanForDevice(dto);
-        return dto;
+    private ConfigEntity loginOnlyConfig() {
+        var config = new ConfigEntity();
+        var daily = config.getDaily();
+        daily.setFight(new ArrayList<>());
+        daily.setPlan(new ArrayList<>());
+        daily.setSanity(new Sanity(0, 0));
+        daily.setMail(false);
+        daily.setFriend(false);
+        daily.setInfrastructure(new Infrastructure(false, false, false, false, false));
+        daily.setCredit(false);
+        daily.setOffer(new Offer(false, false, false, false, false, false));
+        daily.setTask(false);
+        daily.setActivity(false);
+        daily.setShopping(false);
+        return config;
+    }
+
+    Map<Long, UrgentTaskEntity> promoteReadyUrgentTasks(LocalDateTime now) {
+        var urgentByAccount = new LinkedHashMap<Long, UrgentTaskEntity>();
+        urgentTaskService.findDispatchable(GameDayClock.gameDay(now), now).forEach(task -> {
+            if (task != null && task.getAccountId() != null) {
+                urgentByAccount.putIfAbsent(task.getAccountId(), task);
+            }
+        });
+        if (urgentByAccount.isEmpty()) {
+            return urgentByAccount;
+        }
+        synchronized (dynamicInfo.getWaitUserList()) {
+            dynamicInfo.getWaitUserList().removeIf(urgentByAccount::containsKey);
+            dynamicInfo.getWaitUserList().addAll(0, new ArrayList<>(urgentByAccount.keySet()));
+        }
+        return urgentByAccount;
     }
 
     private boolean isDeleted(AccountEntity account) {
@@ -185,14 +231,17 @@ public class TaskServiceImpl implements TaskService {
             var existingAccount = accountMapper.selectById(existingAssignment.getAccountId());
             if (!isDeleted(existingAccount)) {
                 return Result.repeatSuccess(
-                        buildTaskAccountDTO(existingAccount, existingAssignment.getAssignmentId()), "重复获取");
+                        buildTaskAccountDTO(existingAccount, existingAssignment), "重复获取");
             }
             taskAssignmentService.closeAssignment(existingAssignment, "INVALID", "account no longer exists", false);
         }
 
+        var urgentByAccount = promoteReadyUrgentTasks(now);
+
         //任务上锁
         if (!dynamicInfo.getWaitUserList().isEmpty()) {
             var account = new AccountEntity();
+            UrgentTaskEntity selectedUrgentTask = null;
 
             //检查任务是否达到下发标准
             var iterator = dynamicInfo.getWaitUserList().iterator();
@@ -224,7 +273,8 @@ public class TaskServiceImpl implements TaskService {
                 }
 
                 //时间检查，不在激活区间则跳转到下一个判断
-                if (!checkActivationTime(account)) {
+                var candidateUrgentTask = urgentByAccount.get(account.getId());
+                if (candidateUrgentTask == null && !checkActivationTime(account)) {
                     continue;
                 }
 
@@ -251,6 +301,7 @@ public class TaskServiceImpl implements TaskService {
 
                 //冻结判断，不处于冻结状态则返回任务
                 if (!checkFreeze(account)) {
+                    selectedUrgentTask = candidateUrgentTask;
                     hit = true;
                     break;
                 }
@@ -263,7 +314,7 @@ public class TaskServiceImpl implements TaskService {
             }
 
             //任务上锁，同时分配强制超时期限
-            var assignment = lockTask(deviceToken, account);
+            var assignment = lockTask(deviceToken, account, selectedUrgentTask);
 
             //记录日志
 //            log(deviceToken, account, "INFO", "任务开始", "任务开始", null);
@@ -278,7 +329,7 @@ public class TaskServiceImpl implements TaskService {
             dynamicInfo.setUserSanZero(account.getId());
 
 
-            return Result.success(buildTaskAccountDTO(account, assignment.getAssignmentId()), "获取成功");
+            return Result.success(buildTaskAccountDTO(account, assignment), "获取成功");
 
         } else {
             return Result.success("待分配队列为空");
@@ -296,6 +347,30 @@ public class TaskServiceImpl implements TaskService {
         if (account == null) {
             taskAssignmentService.closeAssignment(assignment, "INVALID", "account no longer exists", false);
             return Result.notFound("任务账号不存在");
+        }
+
+        if (UrgentTaskService.MODE_LOGIN_ONLY.equals(assignment.getTaskMode())) {
+            var activeUrgency = urgentTaskService.findActiveByAccount(
+                    account.getId(), GameDayClock.gameDay(GameDayClock.now()));
+            if (activeUrgency.isPresent()) {
+                if (!taskAssignmentService.closeAssignment(assignment, "FAILED",
+                        "login-only completed without successful login", false)) {
+                    return Result.failed("补登状态保存失败，请稍后重试");
+                }
+                var failedAt = GameDayClock.now();
+                var retryUntil = accountRuntimeService.recordFailure(
+                        account, deviceToken, "LOGIN_NOT_CONFIRMED", failedAt);
+                dynamicInfo.getFreezeUserInfoMap().put(account.getId(), retryUntil);
+                dynamicInfo.getCooldownReasonMap().put(account.getId(), "retryBackoff");
+                addWaitTaskIfAbsent(account.getId());
+                urgentTaskService.markRetry(activeUrgency.get(), "LOGIN_NOT_CONFIRMED", retryUntil, failedAt);
+                return Result.success("登录成功日志未确认，已进入递增重试");
+            }
+            if (!taskAssignmentService.closeAssignment(assignment, "STALE_LOGIN_ONLY",
+                    "urgent game day ended", true)) {
+                return Result.failed("补登状态保存失败，请稍后重试");
+            }
+            return Result.success("补登窗口已结束，账号已回到普通队列");
         }
 
         //检查B服限制新增设备
@@ -343,6 +418,15 @@ public class TaskServiceImpl implements TaskService {
         deviceRuntimeService.recordTaskSuccess(deviceToken, completedAt);
         accountRuntimeService.recordTaskCompleted(account.getId(), completedAt);
         sanityOcrService.submit(account.getId(), imageUrl, completedAt);
+        var activeUrgency = urgentTaskService.findActiveByAccount(
+                account.getId(), GameDayClock.gameDay(completedAt));
+        if (activeUrgency.isPresent()) {
+            var urgentTask = activeUrgency.get();
+            if (UrgentTaskService.STATUS_RUNNING.equals(urgentTask.getStatus())) {
+                urgentTaskService.markWaiting(urgentTask.getId(), completedAt);
+            }
+            addWaitTaskIfAbsent(account.getId());
+        }
 
         return Result.success("success");
     }
@@ -388,6 +472,14 @@ public class TaskServiceImpl implements TaskService {
             addWaitTaskIfAbsent(account.getId());
             messageService.push(account, "设备异常",
                     "当前设备连续任务失败，已暂停1小时并重新排队；系统会自动换用其他可用设备。");
+        }
+
+        var activeUrgency = urgentTaskService.findActiveByAccount(
+                account.getId(), GameDayClock.gameDay(failureAt));
+        if (activeUrgency.isPresent()) {
+            var effectiveRetryAt = dynamicInfo.getFreezeUserInfoMap().getOrDefault(account.getId(), retryUntil);
+            urgentTaskService.markRetry(activeUrgency.get(), type == null ? "unknown" : type,
+                    effectiveRetryAt, failureAt);
         }
 
         //推送消息
@@ -800,6 +892,17 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public TaskAssignmentEntity lockTask(String deviceToken, AccountEntity account) {
         return taskAssignmentService.createAssignment(account, deviceToken, GameDayClock.now());
+    }
+
+    private TaskAssignmentEntity lockTask(String deviceToken, AccountEntity account,
+                                          UrgentTaskEntity urgentTask) {
+        if (urgentTask == null) {
+            return lockTask(deviceToken, account);
+        }
+        var assignment = taskAssignmentService.createAssignment(account, deviceToken, GameDayClock.now(),
+                UrgentTaskService.MODE_LOGIN_ONLY, urgentTask.getId());
+        urgentTaskService.markRunning(urgentTask, GameDayClock.now());
+        return assignment;
     }
 
     @Override

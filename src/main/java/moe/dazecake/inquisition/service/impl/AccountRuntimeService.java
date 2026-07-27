@@ -8,6 +8,7 @@ import moe.dazecake.inquisition.mapper.LogMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AccountRuntimeEntity;
 import moe.dazecake.inquisition.model.entity.LogEntity;
+import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.GameLogClassifier;
@@ -37,6 +38,9 @@ public class AccountRuntimeService {
 
     @Resource
     TaskAssignmentService taskAssignmentService;
+
+    @Resource
+    UrgentTaskService urgentTaskService;
 
     @Resource
     SklandCalibrationService sklandCalibrationService;
@@ -76,8 +80,10 @@ public class AccountRuntimeService {
             return false;
         }
 
+        TaskAssignmentEntity currentAssignment = null;
         var acceptedAssignment = true;
         if (logEntity.getFrom() != null) {
+            currentAssignment = taskAssignmentService.findByDevice(logEntity.getFrom()).orElse(null);
             acceptedAssignment = taskAssignmentService.recordProgress(
                     logEntity.getFrom(), logEntity.getAssignmentId(),
                     logEntity.getLevel(), logEntity.getTitle(), logEntity.getDetail());
@@ -105,6 +111,17 @@ public class AccountRuntimeService {
             runtime.setLastLoginAt(now);
         }
         saveRuntime(runtime, exists);
+        if (GameLogClassifier.isSuccessfulLoginLog(logEntity.getTitle())) {
+            var completedUrgency = urgentTaskService.completeForSuccessfulLogin(
+                    accountId, GameDayClock.gameDay(now), now);
+            if (completedUrgency.isPresent()
+                    && currentAssignment != null
+                    && UrgentTaskService.MODE_LOGIN_ONLY.equals(currentAssignment.getTaskMode())
+                    && Objects.equals(currentAssignment.getAccountId(), accountId)) {
+                taskAssignmentService.closeAssignment(currentAssignment, "LOGIN_CONFIRMED",
+                        "twenty-six login confirmed", true);
+            }
+        }
         return true;
     }
 

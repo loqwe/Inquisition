@@ -20,6 +20,8 @@ public class TaskAssignmentHistoryEntity {
     private Long accountId;
     private String deviceToken;
     private String taskType;
+    private String taskMode;
+    private Long urgentTaskId;
     private String status;
     private LocalDateTime assignedAt;
     private LocalDateTime leaseExpiresAt;

@@ -11,8 +11,11 @@ import moe.dazecake.inquisition.model.dto.device.DeviceTokenDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.TaskDateSet.LockTask;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
+import moe.dazecake.inquisition.model.vo.task.TaskBoardVO;
+import moe.dazecake.inquisition.service.impl.TaskBoardService;
 import moe.dazecake.inquisition.service.impl.TaskServiceImpl;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.web.bind.annotation.*;
 
@@ -31,6 +34,9 @@ public class TaskController {
 
     @Resource
     TaskServiceImpl taskService;
+
+    @Resource
+    TaskBoardService taskBoardService;
 
     @Operation(summary = "获取任务")
     @GetMapping("/getTask")
@@ -77,6 +83,36 @@ public class TaskController {
     @GetMapping("/showLockTaskList")
     public Result<ArrayList<LockTask>> showLockTaskList() {
         return Result.success(dynamicInfo.getAllWorkUserInfo(), "查询成功");
+    }
+
+    @Login
+    @Operation(summary = "查询任务管理看板")
+    @GetMapping("/showTaskBoard")
+    public Result<TaskBoardVO> showTaskBoard() {
+        return Result.success(taskBoardService.getBoard(GameDayClock.now()), "查询成功");
+    }
+
+    @Login
+    @Operation(summary = "立即重试26点加急登录任务")
+    @PostMapping("/retryUrgentTask")
+    public Result<String> retryUrgentTask(@RequestBody AccountIDDTO urgentTaskIdDTO) {
+        if (urgentTaskIdDTO == null || urgentTaskIdDTO.getId() == null) {
+            return Result.paramError("加急任务不能为空");
+        }
+        return taskBoardService.retryUrgentTask(urgentTaskIdDTO.getId(), GameDayClock.now())
+                ? Result.success("已立即重试") : Result.notFound("加急任务不存在或已结束");
+    }
+
+    @Login
+    @Operation(summary = "取消26点加急登录任务")
+    @PostMapping("/cancelUrgentTask")
+    public Result<String> cancelUrgentTask(@RequestBody AccountIDDTO urgentTaskIdDTO) {
+        if (urgentTaskIdDTO == null || urgentTaskIdDTO.getId() == null) {
+            return Result.paramError("加急任务不能为空");
+        }
+        return taskBoardService.cancelUrgentTask(urgentTaskIdDTO.getId(), GameDayClock.now())
+                ? Result.success("已取消加急，账号保留在普通队列")
+                : Result.notFound("加急任务不存在或已结束");
     }
 
     @Login

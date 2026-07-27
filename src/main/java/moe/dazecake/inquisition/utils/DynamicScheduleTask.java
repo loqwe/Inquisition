@@ -15,6 +15,7 @@ import moe.dazecake.inquisition.model.entity.LogEntity;
 import moe.dazecake.inquisition.model.local.ScheduledTaskDefinition;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
+import moe.dazecake.inquisition.service.impl.FinalLoginSweepService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
 import moe.dazecake.inquisition.service.impl.MessageServiceImpl;
@@ -54,6 +55,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     public static final String MISSING_LOG_AUDIT_TASK = "missing-log-audit";
     public static final String DAILY_LOGIN_SWEEP_TASK = "daily-login-sweep";
+    public static final String FINAL_LOGIN_SWEEP_TASK = "final-login-sweep";
+    public static final String FINAL_LOGIN_SUMMARY_TASK = "final-login-summary";
+    public static final String URGENT_LOGIN_CLEANUP_TASK = "urgent-login-cleanup";
 
     private final Gson gson = new Gson();
 
@@ -95,6 +99,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
     @Resource
     DailyLoginSweepService dailyLoginSweepService;
+
+    @Resource
+    FinalLoginSweepService finalLoginSweepService;
 
     @Resource
     ScheduledTaskMonitorService scheduledTaskMonitor;
@@ -313,6 +320,18 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 definition(12, DAILY_LOGIN_SWEEP_TASK, "14点补登扫描", "将今日登录次数小于1的账号提升到等待队列前部",
                         "0 0 14 * * ?", "每天14:00", 15, 30, () -> true),
                 () -> runDailyLoginSweep(GameDayClock.now()));
+        registerMonitoredTask(taskRegistrar,
+                definition(13, FINAL_LOGIN_SWEEP_TASK, "26点最终补登", "次日02:00将仍未登录账号升级为仅登录加急任务",
+                        "0 0 2 * * ?", "每天26:00（次日02:00）", 15, 30, () -> true),
+                () -> runFinalLoginSweep(GameDayClock.now()));
+        registerMonitoredTask(taskRegistrar,
+                definition(14, FINAL_LOGIN_SUMMARY_TASK, "26点补登结果汇总", "03:45汇总仍未完成的加急登录账号",
+                        "0 45 3 * * ?", "每天03:45", 5, 10, () -> true),
+                () -> finalLoginSweepService.sendFailureSummary(GameDayClock.now()));
+        registerMonitoredTask(taskRegistrar,
+                definition(15, URGENT_LOGIN_CLEANUP_TASK, "加急登录状态清理", "04:00切换游戏日并清理旧加急状态",
+                        "0 0 4 * * ?", "每天04:00", 5, 10, () -> true),
+                () -> finalLoginSweepService.cleanup(GameDayClock.now()));
     }
 
     private ScheduledTaskDefinition definition(int order, String key, String name, String description,
@@ -373,6 +392,15 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
             dailyLoginSweepService.runIfDue(now);
         } catch (RuntimeException exception) {
             log.warn("\u3010\u5ba1\u5224\u5ead\u301114\u70b9\u8865\u767b\u626b\u63cf\u5931\u8d25", exception);
+            throw exception;
+        }
+    }
+
+    void runFinalLoginSweep(LocalDateTime now) {
+        try {
+            finalLoginSweepService.runIfDue(now);
+        } catch (RuntimeException exception) {
+            log.warn("【审判庭】26点最终补登扫描失败", exception);
             throw exception;
         }
     }

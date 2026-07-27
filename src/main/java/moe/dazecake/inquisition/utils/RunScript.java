@@ -12,10 +12,12 @@ import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
+import moe.dazecake.inquisition.service.impl.FinalLoginSweepService;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
 import moe.dazecake.inquisition.service.impl.ScheduledTaskMonitorService;
 import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
+import moe.dazecake.inquisition.service.impl.UrgentTaskService;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -63,7 +65,13 @@ public class RunScript implements ApplicationRunner {
     DailyLoginSweepService dailyLoginSweepService;
 
     @Resource
+    FinalLoginSweepService finalLoginSweepService;
+
+    @Resource
     ScheduledTaskMonitorService scheduledTaskMonitor;
+
+    @Resource
+    UrgentTaskService urgentTaskService;
 
     @Value("${inquisition.secret:}")
     String secret;
@@ -146,17 +154,25 @@ public class RunScript implements ApplicationRunner {
         // Active leases are authoritative in MySQL; do not revive stale work entries from data.json.
         dynamicInfo.getWorkUserList().clear();
         dynamicInfo.getWorkUserInfoMap().clear();
+        var cleanedUrgentTasks = cleanupUrgentLoginTasks(now);
         var activeDevices = deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
                 .eq(DeviceEntity::getDelete, 0));
         activeDevices.forEach(device -> deviceRuntimeService.initializeDevice(device, now));
         var expiredAssignments = taskAssignmentService.closeExpiredAssignments(now);
         var restoredAssignments = taskAssignmentService.restoreActiveAssignments(now);
         var restoredCooldowns = accountRuntimeService.restoreRetryCooldowns(now);
+        var restoredUrgentTasks = restoreUrgentLoginTasks(now);
         if (expiredAssignments > 0 || restoredAssignments > 0) {
             log.info("【审判庭初始化】恢复任务租约: active={}, expired={}", restoredAssignments, expiredAssignments);
         }
         if (restoredCooldowns > 0) {
             log.info("【审判庭初始化】恢复重试冷却账号数: {}", restoredCooldowns);
+        }
+        if (restoredUrgentTasks > 0) {
+            log.info("【审判庭初始化】恢复26点加急登录账号数: {}", restoredUrgentTasks);
+        }
+        if (cleanedUrgentTasks > 0) {
+            log.info("【审判庭初始化】清理过期26点加急登录记录数: {}", cleanedUrgentTasks);
         }
 
         if (secret != null && !secret.isBlank()) {
@@ -171,6 +187,11 @@ public class RunScript implements ApplicationRunner {
         } catch (RuntimeException exception) {
             log.warn("【审判庭初始化】14点补登启动补偿失败", exception);
         }
+        try {
+            runFinalLoginCatchUp(now);
+        } catch (RuntimeException exception) {
+            log.warn("【审判庭初始化】26点最终补登启动补偿失败", exception);
+        }
 
         log.info("【审判庭初始化】 初始化完成");
     }
@@ -178,6 +199,43 @@ public class RunScript implements ApplicationRunner {
     void runDailyLoginCatchUp(LocalDateTime now) {
         scheduledTaskMonitor.execute(DynamicScheduleTask.DAILY_LOGIN_SWEEP_TASK, "STARTUP_RECOVERY",
                 () -> dailyLoginSweepService.runIfDue(now));
+    }
+
+    void runFinalLoginCatchUp(LocalDateTime now) {
+        scheduledTaskMonitor.execute(DynamicScheduleTask.FINAL_LOGIN_SWEEP_TASK, "STARTUP_RECOVERY",
+                () -> finalLoginSweepService.runIfDue(now));
+    }
+
+    int cleanupUrgentLoginTasks(LocalDateTime now) {
+        return finalLoginSweepService.cleanup(now);
+    }
+
+    int restoreUrgentLoginTasks(LocalDateTime now) {
+        var restored = 0;
+        for (var task : urgentTaskService.findActiveForGameDay(GameDayClock.gameDay(now))) {
+            if (task == null || task.getAccountId() == null) {
+                continue;
+            }
+            if (UrgentTaskService.STATUS_RUNNING.equals(task.getStatus())) {
+                if (taskAssignmentService.findByAccount(task.getAccountId()).isPresent()) {
+                    continue;
+                }
+                if (!urgentTaskService.markWaiting(task.getId(), now)) {
+                    continue;
+                }
+            }
+            if (task.getNextRetryAt() != null && task.getNextRetryAt().isAfter(now)) {
+                dynamicInfo.getFreezeUserInfoMap().put(task.getAccountId(), task.getNextRetryAt());
+                dynamicInfo.getCooldownReasonMap().put(task.getAccountId(), "retryBackoff");
+            }
+            synchronized (dynamicInfo.getWaitUserList()) {
+                if (!dynamicInfo.getWaitUserList().contains(task.getAccountId())) {
+                    dynamicInfo.getWaitUserList().add(task.getAccountId());
+                }
+            }
+            restored++;
+        }
+        return restored;
     }
 
     @PreDestroy
