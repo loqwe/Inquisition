@@ -37,7 +37,7 @@ BEGIN
         END IF;
         SET @account_scheduled_dispatch_sql = CONCAT(
             @account_scheduled_dispatch_sql,
-            ', ALGORITHM=INSTANT'
+            ', ALGORITHM=INPLACE, LOCK=NONE'
         );
         PREPARE account_scheduled_dispatch_stmt FROM @account_scheduled_dispatch_sql;
         EXECUTE account_scheduled_dispatch_stmt;

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS account_scheduled_run (
 
 DELIMITER $$
 DROP PROCEDURE IF EXISTS account_scheduled_dispatch_add_columns_if_missing$$
+DROP PROCEDURE IF EXISTS account_scheduled_dispatch_assert_table$$
 DROP PROCEDURE IF EXISTS account_scheduled_dispatch_assert_column$$
 DROP PROCEDURE IF EXISTS account_scheduled_dispatch_assert_index$$
 
@@ -74,6 +75,26 @@ BEGIN
         PREPARE account_scheduled_dispatch_stmt FROM @account_scheduled_dispatch_sql;
         EXECUTE account_scheduled_dispatch_stmt;
         DEALLOCATE PREPARE account_scheduled_dispatch_stmt;
+    END IF;
+END$$
+
+CREATE PROCEDURE account_scheduled_dispatch_assert_table(
+    IN p_table_name VARCHAR(64)
+)
+BEGIN
+    DECLARE v_match_count INT DEFAULT 0;
+    DECLARE v_message VARCHAR(128);
+
+    SELECT COUNT(*) INTO v_match_count
+    FROM information_schema.tables
+    WHERE table_schema = DATABASE()
+      AND table_name = p_table_name
+      AND UPPER(engine) = 'INNODB'
+      AND table_collation = 'utf8mb4_0900_ai_ci';
+
+    IF v_match_count <> 1 THEN
+        SET v_message = CONCAT('Schema drift: ', p_table_name, ' storage');
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_message;
     END IF;
 END$$
 
@@ -131,8 +152,12 @@ BEGIN
           AND index_name = p_index_name
         GROUP BY index_name
         HAVING GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') = p_columns
+           AND COUNT(*) = 1 + LENGTH(p_columns) - LENGTH(REPLACE(p_columns, ',', ''))
            AND MIN(non_unique) = p_non_unique
            AND MAX(non_unique) = p_non_unique
+           AND SUM(CASE WHEN UPPER(index_type) <> 'BTREE' THEN 1 ELSE 0 END) = 0
+           AND SUM(CASE WHEN is_visible <> 'YES' THEN 1 ELSE 0 END) = 0
+           AND SUM(CASE WHEN sub_part IS NOT NULL THEN 1 ELSE 0 END) = 0
     ) AS matching_indexes;
 
     IF v_match_count <> 1 THEN
@@ -143,6 +168,9 @@ END$$
 
 CALL account_scheduled_dispatch_add_columns_if_missing('task_assignment')$$
 CALL account_scheduled_dispatch_add_columns_if_missing('task_assignment_history')$$
+
+CALL account_scheduled_dispatch_assert_table('account_dispatch_config')$$
+CALL account_scheduled_dispatch_assert_table('account_scheduled_run')$$
 
 CALL account_scheduled_dispatch_assert_column('account_dispatch_config', 'account_id', 'bigint', 'NO', NULL, 1, NULL)$$
 CALL account_scheduled_dispatch_assert_column('account_dispatch_config', 'dispatch_mode', 'varchar(16)', 'NO', 'AUTO', 0, NULL)$$
@@ -177,5 +205,6 @@ CALL account_scheduled_dispatch_assert_index('account_scheduled_run', 'idx_accou
 
 DROP PROCEDURE account_scheduled_dispatch_assert_index$$
 DROP PROCEDURE account_scheduled_dispatch_assert_column$$
+DROP PROCEDURE account_scheduled_dispatch_assert_table$$
 DROP PROCEDURE account_scheduled_dispatch_add_columns_if_missing$$
 DELIMITER ;

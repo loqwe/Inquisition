@@ -1,6 +1,8 @@
 package moe.dazecake.inquisition.model.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -24,7 +26,9 @@ public class AccountScheduledRunEntity {
     private Integer attemptCount = 0;
     private LocalDateTime nextRetryAt;
     private String lastError;
-    private LocalDateTime createdAt = LocalDateTime.now();
-    private LocalDateTime updatedAt = LocalDateTime.now();
+    @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
+    private LocalDateTime createdAt;
+    @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
+    private LocalDateTime updatedAt;
     private LocalDateTime finishedAt;
 }
