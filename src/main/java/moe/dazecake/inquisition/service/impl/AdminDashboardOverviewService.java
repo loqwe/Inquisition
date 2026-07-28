@@ -113,7 +113,7 @@ public class AdminDashboardOverviewService {
                                                         PageQueryVO<AccountWithSanVO> missingPage,
                                                         TaskBoardVO board) {
         var eligible = value(metrics.getEligibleDaily());
-        var missing = Math.min(eligible, value(metrics.getMissingLogin()));
+        var missing = Math.min(eligible, value(missingPage.getTotal()));
         var logged = Math.max(0L, eligible - missing);
         var result = new AdminDashboardOverviewVO.Accounts()
                 .setEligibleDaily(eligible)
