@@ -80,6 +80,8 @@ storage:
 inquisition:
   secret: xxx # 用于加密token 建议使用系统随机生成的
   skland-sync-secret: ${INQUISITION_SKLAND_SYNC_SECRET:}
+  accountSchedule:
+    scanBatchSize: ${INQUISITION_ACCOUNT_SCHEDULE_SCAN_BATCH_SIZE:200}
   ocr:
     enabled: ${INQUISITION_OCR_ENABLE:false}
     service-url: ${INQUISITION_OCR_SERVICE_URL:}

@@ -42,9 +42,11 @@ public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchC
             "FROM account_dispatch_config",
             "WHERE dispatch_mode = 'SCHEDULED'",
             "AND next_scheduled_at <= #{now}",
-            "ORDER BY next_scheduled_at, account_id"
+            "ORDER BY next_scheduled_at, account_id",
+            "LIMIT #{limit}"
     })
-    List<AccountDispatchConfigEntity> selectDue(@Param("now") LocalDateTime now);
+    List<AccountDispatchConfigEntity> selectDue(@Param("now") LocalDateTime now,
+                                                @Param("limit") int limit);
 
     @Update({
             "UPDATE account_dispatch_config",

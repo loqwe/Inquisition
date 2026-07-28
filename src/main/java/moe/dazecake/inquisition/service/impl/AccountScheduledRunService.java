@@ -6,6 +6,7 @@ import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
 import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
 import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
 import moe.dazecake.inquisition.utils.GameDayClock;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,13 +14,11 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 @Service
 public class AccountScheduledRunService {
@@ -32,6 +31,9 @@ public class AccountScheduledRunService {
 
     private static final Set<String> ACTIVE_STATUSES = Set.of(
             STATUS_WAITING, STATUS_RUNNING, STATUS_RETRY_WAIT);
+
+    @Value("${inquisition.accountSchedule.scanBatchSize:200}")
+    int batchSize = AccountScheduledDispatchService.DEFAULT_BATCH_SIZE;
 
     @Resource
     AccountScheduledRunMapper runMapper;
@@ -106,20 +108,14 @@ public class AccountScheduledRunService {
 
     public List<AccountScheduledRunEntity> findDispatchable(LocalDateTime now) {
         Objects.requireNonNull(now, "now");
-        var rows = runMapper.selectList(Wrappers.<AccountScheduledRunEntity>lambdaQuery()
-                .in(AccountScheduledRunEntity::getStatus, STATUS_WAITING, STATUS_RETRY_WAIT)
-                .orderByAsc(AccountScheduledRunEntity::getScheduledFor)
-                .orderByAsc(AccountScheduledRunEntity::getId));
+        if (batchSize <= 0) {
+            throw new IllegalStateException("Scheduled account dispatch batch size must be positive");
+        }
+        var rows = runMapper.selectDispatchable(now, batchSize);
         if (rows == null) {
             return new ArrayList<>();
         }
-        return rows.stream()
-                .filter(Objects::nonNull)
-                .filter(run -> STATUS_WAITING.equals(run.getStatus())
-                        || STATUS_RETRY_WAIT.equals(run.getStatus())
-                        && (run.getNextRetryAt() == null || !run.getNextRetryAt().isAfter(now)))
-                .sorted(dispatchOrder())
-                .collect(Collectors.toList());
+        return rows;
     }
 
     @Transactional
@@ -250,13 +246,6 @@ public class AccountScheduledRunService {
         }
         localUpdate.accept(run);
         return true;
-    }
-
-    private Comparator<AccountScheduledRunEntity> dispatchOrder() {
-        return Comparator.comparing(AccountScheduledRunEntity::getScheduledFor,
-                        Comparator.nullsLast(Comparator.naturalOrder()))
-                .thenComparing(AccountScheduledRunEntity::getId,
-                        Comparator.nullsLast(Comparator.naturalOrder()));
     }
 
     private int valueOrZero(Integer value) {

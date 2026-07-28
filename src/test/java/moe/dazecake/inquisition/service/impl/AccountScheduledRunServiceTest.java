@@ -5,6 +5,7 @@ import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
 import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
 import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
 import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
+import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -21,7 +22,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -228,24 +228,43 @@ class AccountScheduledRunServiceTest {
     }
 
     @Test
-    void dispatchableRunsIncludeWaitingAndOnlyDueRetries() {
+    void dispatchableRunsComeFromTheBoundedDatabaseQuery() {
         var service = service();
+        service.batchSize = 2;
         var now = LocalDateTime.of(2026, 7, 28, 20, 0);
         var waiting = run(1L, 1L, now.minusMinutes(30), AccountScheduledRunService.STATUS_WAITING);
         var dueRetry = run(2L, 2L, now.minusMinutes(20), AccountScheduledRunService.STATUS_RETRY_WAIT)
                 .setNextRetryAt(now);
-        var futureRetry = run(3L, 3L, now.minusMinutes(10), AccountScheduledRunService.STATUS_RETRY_WAIT)
-                .setNextRetryAt(now.plusMinutes(1));
-        var running = run(4L, 4L, now.minusMinutes(40), AccountScheduledRunService.STATUS_RUNNING);
-        var succeeded = run(5L, 5L, now.minusMinutes(50), AccountScheduledRunService.STATUS_SUCCEEDED);
-        when(service.runMapper.selectList(any())).thenReturn(
-                List.of(futureRetry, succeeded, dueRetry, running, waiting));
+        when(service.runMapper.selectDispatchable(now, 2)).thenReturn(List.of(waiting, dueRetry));
 
         var result = service.findDispatchable(now);
 
-        assertEquals(List.of(1L, 2L), result.stream()
-                .map(AccountScheduledRunEntity::getId)
-                .collect(Collectors.toList()));
+        assertEquals(List.of(waiting, dueRetry), result);
+        verify(service.runMapper).selectDispatchable(now, 2);
+        verify(service.runMapper, never()).selectList(any());
+    }
+
+    @Test
+    void dispatchableQueryFiltersOrdersAndLimitsInSql() throws Exception {
+        var method = AccountScheduledRunMapper.class
+                .getMethod("selectDispatchable", LocalDateTime.class, int.class);
+        var sql = String.join(" ", method.getAnnotation(Select.class).value());
+
+        assertTrue(sql.contains("status = 'WAITING'"));
+        assertTrue(sql.contains("status = 'RETRY_WAIT' AND next_retry_at <= #{now}"));
+        assertTrue(sql.contains("ORDER BY scheduled_for, id"));
+        assertTrue(sql.contains("LIMIT #{limit}"));
+    }
+
+    @Test
+    void dispatchableQueryRejectsANonPositiveBatchSize() {
+        var service = service();
+        service.batchSize = 0;
+
+        assertThrows(IllegalStateException.class,
+                () -> service.findDispatchable(LocalDateTime.of(2026, 7, 28, 20, 0)));
+
+        verifyNoInteractions(service.runMapper);
     }
 
     @Test
