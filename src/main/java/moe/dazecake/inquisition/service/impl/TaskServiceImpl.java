@@ -82,6 +82,9 @@ public class TaskServiceImpl implements TaskService {
     @Resource
     DispatchQueueService dispatchQueueService;
 
+    @Resource
+    AccountScheduledRunLifecycleService scheduledLifecycleService;
+
     @Value("${spring.mail.enable:false}")
     boolean enableMail;
 
@@ -321,7 +324,7 @@ public class TaskServiceImpl implements TaskService {
             }
 
             //任务上锁，同时分配强制超时期限
-            var assignment = lockTask(deviceToken, account, selectedUrgentTask);
+            var assignment = lockTask(deviceToken, account, selectedUrgentTask, selectedIntent);
 
             //记录日志
 //            log(deviceToken, account, "INFO", "任务开始", "任务开始", null);
@@ -464,19 +467,16 @@ public class TaskServiceImpl implements TaskService {
                 account, deviceToken, type == null ? "unknown" : type, failureAt);
 
         //异常处理
-        errorHandle(account, deviceToken, type);
+        errorHandle(account, deviceToken, type, false);
         var existingCooldown = dynamicInfo.getFreezeUserInfoMap().get(account.getId());
         if (existingCooldown == null || existingCooldown.isBefore(retryUntil)) {
             dynamicInfo.getFreezeUserInfoMap().put(account.getId(), retryUntil);
             dynamicInfo.getCooldownReasonMap().put(account.getId(), "retryBackoff");
         }
-        addWaitTaskIfAbsent(account.getId());
-
         if (deviceRuntimeService.recordTaskFailure(deviceToken, failureAt)) {
             var suspendedUntil = failureAt.plusHours(1);
             dynamicInfo.getFreezeUserInfoMap().put(account.getId(), suspendedUntil);
             dynamicInfo.getCooldownReasonMap().put(account.getId(), "deviceRepeatedFailure");
-            addWaitTaskIfAbsent(account.getId());
             messageService.push(account, "设备异常",
                     "当前设备连续任务失败，已暂停1小时并重新排队；系统会自动换用其他可用设备。");
         }
@@ -488,7 +488,13 @@ public class TaskServiceImpl implements TaskService {
             urgentTaskService.markRetry(activeUrgency.get(), type == null ? "unknown" : type,
                     effectiveRetryAt, failureAt);
         }
-        dispatchQueueService.restoreBest(account.getId(), failureAt);
+        var effectiveRetryAt = dynamicInfo.getFreezeUserInfoMap().getOrDefault(account.getId(), retryUntil);
+        var shouldRequeue = !DispatchIntent.SOURCE_SCHEDULED.equals(assignment.getDispatchSource())
+                || scheduledLifecycleService.retry(assignment,
+                type == null ? "unknown" : type, effectiveRetryAt);
+        if (shouldRequeue) {
+            dispatchQueueService.restoreBest(account.getId(), failureAt);
+        }
 
         //推送消息
         messageService.push(account, "任务失败", "任务失败，请登陆面板查看失败原因");
@@ -884,12 +890,13 @@ public class TaskServiceImpl implements TaskService {
     }
 
     private TaskAssignmentEntity lockTask(String deviceToken, AccountEntity account,
-                                          UrgentTaskEntity urgentTask) {
+                                          UrgentTaskEntity urgentTask, DispatchIntent intent) {
         if (urgentTask == null) {
-            return lockTask(deviceToken, account);
+            return taskAssignmentService.createAssignment(account, deviceToken, GameDayClock.now(),
+                    TaskAssignmentService.MODE_NORMAL, null, intent);
         }
         var assignment = taskAssignmentService.createAssignment(account, deviceToken, GameDayClock.now(),
-                UrgentTaskService.MODE_LOGIN_ONLY, urgentTask.getId());
+                UrgentTaskService.MODE_LOGIN_ONLY, urgentTask.getId(), intent);
         urgentTaskService.markRunning(urgentTask, GameDayClock.now());
         return assignment;
     }
@@ -922,17 +929,21 @@ public class TaskServiceImpl implements TaskService {
 
     @Override
     public void errorHandle(AccountEntity account, String deviceToken, String type) {
+        errorHandle(account, deviceToken, type, true);
+    }
+
+    private void errorHandle(AccountEntity account, String deviceToken, String type, boolean requeue) {
 
         var errorType = type == null ? "unknown" : type;
         switch (errorType) {
             case ("lineBusy"): {
-                putAccountOnCooldown(account, deviceToken, "lineBusy", GameDayClock.now().plusHours(1), true, true);
+                putAccountOnCooldown(account, deviceToken, "lineBusy", GameDayClock.now().plusHours(1), requeue, true);
                 break;
             }
             case ("accountError"): {
                 if (account.getServer() == 0) {
                     if (httpService.isOfficialAccountWork(account.getAccount(), account.getPassword())) {
-                        putAccountOnCooldown(account, deviceToken, "accountError", GameDayClock.now().plusHours(1), true, true);
+                        putAccountOnCooldown(account, deviceToken, "accountError", GameDayClock.now().plusHours(1), requeue, true);
                     } else {
                         account.setFreeze(1);
                         accountMapper.updateById(account);
@@ -943,7 +954,7 @@ public class TaskServiceImpl implements TaskService {
                     }
                 } else if (account.getServer() == 1) {
                     if (httpService.isBiliAccountWork(account.getAccount(), account.getPassword())) {
-                        putAccountOnCooldown(account, deviceToken, "biliLoginLimit", GameDayClock.now().plusHours(1), true, true);
+                        putAccountOnCooldown(account, deviceToken, "biliLoginLimit", GameDayClock.now().plusHours(1), requeue, true);
                         messageService.push(account, "账号异常", "您近期登陆的设备较多，已被B服限制登陆，请立即修改密码并于面板更新密码,否则托管可能将无法继续进行");
                     } else {
                         account.setFreeze(1);
@@ -957,7 +968,7 @@ public class TaskServiceImpl implements TaskService {
                 break;
             }
             default: {
-                putAccountOnCooldown(account, deviceToken, errorType, GameDayClock.now().plusMinutes(10), true, true);
+                putAccountOnCooldown(account, deviceToken, errorType, GameDayClock.now().plusMinutes(10), requeue, true);
                 break;
             }
         }

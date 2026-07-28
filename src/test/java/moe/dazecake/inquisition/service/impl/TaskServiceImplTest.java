@@ -469,7 +469,8 @@ class TaskServiceImplTest {
         when(service.dispatchQueueService.snapshot()).thenReturn(List.of(7L));
         when(service.dispatchQueueService.resolve(eq(7L), any())).thenReturn(intent);
         when(service.accountMapper.selectById(7L)).thenReturn(account);
-        when(service.taskAssignmentService.createAssignment(eq(account), eq("device-1"), any()))
+        when(service.taskAssignmentService.createAssignment(eq(account), eq("device-1"), any(),
+                eq(TaskAssignmentService.MODE_NORMAL), eq(null), eq(intent)))
                 .thenReturn(assignment);
         doReturn(false).when(service).checkActivationTime(account);
 
@@ -481,11 +482,57 @@ class TaskServiceImplTest {
     }
 
     @Test
+    void scheduledFailureKeepsTheSameRunAtTheFinalRetryTime() {
+        var service = taskCompletionService();
+        var assignment = assignment("scheduled-assignment")
+                .setDispatchSource(DispatchIntent.SOURCE_SCHEDULED)
+                .setScheduledRunId(41L);
+        var retryUntil = LocalDateTime.now().plusMinutes(30);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
+        when(service.taskAssignmentService.matchesSubmission(
+                assignment, "device-1", "scheduled-assignment")).thenReturn(true);
+        when(service.taskAssignmentService.closeAssignment(
+                assignment, "FAILED", "network", false)).thenReturn(true);
+        when(service.accountRuntimeService.recordFailure(any(AccountEntity.class), eq("device-1"),
+                eq("network"), any(LocalDateTime.class))).thenReturn(retryUntil);
+        when(service.scheduledLifecycleService.retry(assignment, "network", retryUntil)).thenReturn(true);
+
+        assertEquals(200, service.failTask(
+                "device-1", "scheduled-assignment", "network", null).getCode());
+
+        verify(service.scheduledLifecycleService).retry(assignment, "network", retryUntil);
+        verify(service.dispatchQueueService).restoreBest(eq(398L), any(LocalDateTime.class));
+    }
+
+    @Test
+    void pendingModeChangePreventsFailedScheduledAssignmentFromRequeueing() {
+        var service = taskCompletionService();
+        var assignment = assignment("scheduled-assignment")
+                .setDispatchSource(DispatchIntent.SOURCE_SCHEDULED)
+                .setScheduledRunId(41L);
+        var retryUntil = LocalDateTime.now().plusMinutes(30);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
+        when(service.taskAssignmentService.matchesSubmission(
+                assignment, "device-1", "scheduled-assignment")).thenReturn(true);
+        when(service.taskAssignmentService.closeAssignment(
+                assignment, "FAILED", "network", false)).thenReturn(true);
+        when(service.accountRuntimeService.recordFailure(any(AccountEntity.class), eq("device-1"),
+                eq("network"), any(LocalDateTime.class))).thenReturn(retryUntil);
+        when(service.scheduledLifecycleService.retry(assignment, "network", retryUntil)).thenReturn(false);
+
+        assertEquals(200, service.failTask(
+                "device-1", "scheduled-assignment", "network", null).getCode());
+
+        verify(service.dispatchQueueService, never()).restoreBest(any(), any());
+    }
+
+    @Test
     void sanityThresholdDoesNotResetWhenScheduledModeRejectsAutoAdmission() {
         var service = new TaskServiceImpl();
         service.dynamicInfo = new DynamicInfo();
         service.accountMapper = mock(AccountMapper.class);
         service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
         service.messageService = mock(MessageServiceImpl.class);
         var account = new AccountEntity().setId(7L).setDelete(0).setFreeze(0)
                 .setExpireTime(LocalDateTime.of(2099, 1, 1, 0, 0));
@@ -504,12 +551,14 @@ class TaskServiceImplTest {
         service.dynamicInfo = new DynamicInfo();
         service.accountMapper = mock(AccountMapper.class);
         service.messageService = mock(MessageServiceImpl.class);
+        service.logService = mock(LogServiceImpl.class);
         service.taskAssignmentService = mock(TaskAssignmentService.class);
         service.deviceRuntimeService = mock(DeviceRuntimeService.class);
         service.accountRuntimeService = mock(AccountRuntimeService.class);
         service.sanityOcrService = mock(SanityOcrService.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
         when(service.accountMapper.selectById(398L)).thenReturn(new AccountEntity()
                 .setId(398L)
                 .setName("账号774")

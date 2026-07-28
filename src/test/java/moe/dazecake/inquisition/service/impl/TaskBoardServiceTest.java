@@ -6,6 +6,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import org.junit.jupiter.api.Test;
@@ -107,6 +108,33 @@ class TaskBoardServiceTest {
         assertTrue(service.cancelUrgentTask(11L, now));
 
         verify(service.dispatchQueueService).restoreBest(7L, now);
+    }
+
+    @Test
+    void snapshotExposesScheduledSourceOnlyOnAdministratorTaskRows() {
+        var service = service();
+        var now = LocalDateTime.of(2026, 7, 28, 19, 35);
+        service.dynamicInfo.setWaitUserList(new java.util.ArrayList<>(List.of(7L)));
+        var scheduledIntent = DispatchIntent.scheduled(7L, 41L, now.minusMinutes(5));
+        var scheduledAssignment = assignment("scheduled", 8L, "device-a",
+                TaskAssignmentService.MODE_NORMAL, now.minusMinutes(3))
+                .setDispatchSource(DispatchIntent.SOURCE_SCHEDULED)
+                .setScheduledRunId(42L);
+        when(service.dispatchQueueService.resolve(7L, now)).thenReturn(scheduledIntent);
+        when(service.taskAssignmentService.findAll()).thenReturn(List.of(scheduledAssignment));
+        when(service.accountMapper.selectBatchIds(any())).thenReturn(List.of(
+                account(7L, "账号7"), account(8L, "账号8")));
+        when(service.deviceMapper.selectList(any())).thenReturn(List.of(
+                new DeviceEntity().setDeviceToken("device-a").setDeviceName("A")));
+
+        var board = service.getBoard(now);
+
+        assertEquals(DispatchIntent.SOURCE_SCHEDULED,
+                board.getPendingTasks().get(0).getDispatchSource());
+        assertEquals(41L, board.getPendingTasks().get(0).getScheduledRunId());
+        assertEquals(DispatchIntent.SOURCE_SCHEDULED,
+                board.getRunningTasks().get(0).getDispatchSource());
+        assertEquals(42L, board.getRunningTasks().get(0).getScheduledRunId());
     }
 
     private static TaskBoardService service() {

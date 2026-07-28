@@ -7,6 +7,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.model.vo.task.RunningTaskVO;
 import moe.dazecake.inquisition.model.vo.task.TaskBoardAccountVO;
 import moe.dazecake.inquisition.model.vo.task.TaskBoardSummaryVO;
@@ -113,7 +114,8 @@ public class TaskBoardService {
                 .filter(id -> !activeUrgentByAccount.containsKey(id))
                 .map(accountById::get)
                 .filter(Objects::nonNull)
-                .map(account -> accountRow(account, returnedFromUrgent.contains(account.getId())))
+                .map(account -> accountRow(account, returnedFromUrgent.contains(account.getId()),
+                        dispatchQueueService.resolve(account.getId(), now)))
                 .collect(Collectors.toList());
 
         var runningRows = assignments.stream()
@@ -132,10 +134,10 @@ public class TaskBoardService {
 
         var frozenRows = accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getDelete, 0)
-                        .eq(AccountEntity::getFreeze, 1)
-                        .ge(AccountEntity::getExpireTime, now)
-                        .orderByAsc(AccountEntity::getId)).stream()
-                .map(account -> accountRow(account, false))
+                .eq(AccountEntity::getFreeze, 1)
+                .ge(AccountEntity::getExpireTime, now)
+                .orderByAsc(AccountEntity::getId)).stream()
+                .map(account -> accountRow(account, false, null))
                 .collect(Collectors.toList());
 
         var summary = new TaskBoardSummaryVO()
@@ -195,9 +197,12 @@ public class TaskBoardService {
                 .setLastProgressTitle(assignment == null ? null : assignment.getLastProgressTitle());
     }
 
-    private TaskBoardAccountVO accountRow(AccountEntity account, boolean returnedFromUrgent) {
+    private TaskBoardAccountVO accountRow(AccountEntity account, boolean returnedFromUrgent,
+                                          DispatchIntent intent) {
         return new TaskBoardAccountVO().setId(account.getId()).setName(account.getName())
                 .setAccount(account.getAccount()).setTaskType(account.getTaskType()).setAgent(account.getAgent())
+                .setDispatchSource(intent == null ? null : intent.getSource())
+                .setScheduledRunId(intent == null ? null : intent.getScheduledRunId())
                 .setExpireTime(account.getExpireTime()).setReturnedFromUrgent(returnedFromUrgent);
     }
 
@@ -211,6 +216,8 @@ public class TaskBoardService {
         return new RunningTaskVO().setAssignmentId(assignment.getAssignmentId())
                 .setAccountId(account.getId()).setName(account.getName()).setAccount(account.getAccount())
                 .setTaskType(account.getTaskType()).setTaskMode(assignment.getTaskMode())
+                .setDispatchSource(assignment.getDispatchSource())
+                .setScheduledRunId(assignment.getScheduledRunId())
                 .setUrgent(urgent || UrgentTaskService.MODE_LOGIN_ONLY.equals(assignment.getTaskMode()))
                 .setDeviceName(deviceName).setDeviceToken(assignment.getDeviceToken())
                 .setAssignedAt(assignment.getAssignedAt())

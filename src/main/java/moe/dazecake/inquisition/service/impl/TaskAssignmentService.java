@@ -6,6 +6,7 @@ import moe.dazecake.inquisition.mapper.TaskAssignmentMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentHistoryEntity;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.GameLogClassifier;
@@ -39,14 +40,30 @@ public class TaskAssignmentService {
     @Resource
     DispatchQueueService dispatchQueueService;
 
+    @Resource
+    AccountScheduledRunLifecycleService scheduledLifecycleService;
+
     @Transactional
     public TaskAssignmentEntity createAssignment(AccountEntity account, String deviceToken, LocalDateTime now) {
-        return createAssignment(account, deviceToken, now, MODE_NORMAL, null);
+        return createAssignment(account, deviceToken, now, MODE_NORMAL, null,
+                DispatchIntent.auto(account.getId(), now));
     }
 
     @Transactional
     public TaskAssignmentEntity createAssignment(AccountEntity account, String deviceToken, LocalDateTime now,
                                                  String taskMode, Long urgentTaskId) {
+        var intent = urgentTaskId == null
+                ? DispatchIntent.auto(account.getId(), now)
+                : DispatchIntent.urgent(account.getId(), urgentTaskId, now);
+        return createAssignment(account, deviceToken, now, taskMode, urgentTaskId, intent);
+    }
+
+    @Transactional
+    public TaskAssignmentEntity createAssignment(AccountEntity account, String deviceToken, LocalDateTime now,
+                                                  String taskMode, Long urgentTaskId,
+                                                  DispatchIntent intent) {
+        var effectiveIntent = intent == null
+                ? DispatchIntent.auto(account.getId(), now) : intent;
         var assignment = new TaskAssignmentEntity()
                 .setAssignmentId(UUID.randomUUID().toString())
                 .setAccountId(account.getId())
@@ -54,6 +71,8 @@ public class TaskAssignmentService {
                 .setTaskType(account.getTaskType())
                 .setTaskMode(taskMode == null || taskMode.isBlank() ? MODE_NORMAL : taskMode)
                 .setUrgentTaskId(urgentTaskId)
+                .setDispatchSource(effectiveIntent.getSource())
+                .setScheduledRunId(effectiveIntent.getScheduledRunId())
                 .setAssignedAt(now)
                 .setLeaseExpiresAt(now.plusHours(HARD_LEASE_HOURS))
                 .setLastProgressAt(now)
@@ -61,6 +80,9 @@ public class TaskAssignmentService {
                 .setRetryCount(0);
         if (assignmentMapper.insert(assignment) != 1) {
             throw new IllegalStateException("Unable to persist task assignment");
+        }
+        if (DispatchIntent.SOURCE_SCHEDULED.equals(effectiveIntent.getSource())) {
+            scheduledLifecycleService.start(effectiveIntent);
         }
         dynamicInfo.addWorkUser(account.getId(), deviceToken, assignment.getLeaseExpiresAt(),
                 assignment.getAssignmentId(), assignment.getAssignedAt(), assignment.getLastProgressAt(), false);
@@ -202,6 +224,8 @@ public class TaskAssignmentService {
                 .setTaskType(assignment.getTaskType())
                 .setTaskMode(assignment.getTaskMode())
                 .setUrgentTaskId(assignment.getUrgentTaskId())
+                .setDispatchSource(assignment.getDispatchSource())
+                .setScheduledRunId(assignment.getScheduledRunId())
                 .setStatus(status)
                 .setAssignedAt(assignment.getAssignedAt())
                 .setLeaseExpiresAt(assignment.getLeaseExpiresAt())
@@ -217,7 +241,19 @@ public class TaskAssignmentService {
             throw new IllegalStateException("Unable to archive task assignment");
         }
         dynamicInfo.removeWorkUser(assignment.getAccountId());
-        if (requeue) {
+        var shouldRequeue = requeue;
+        if (DispatchIntent.SOURCE_SCHEDULED.equals(assignment.getDispatchSource())
+                && assignment.getScheduledRunId() != null) {
+            if ("COMPLETED".equals(status)) {
+                scheduledLifecycleService.complete(assignment, closedAt);
+                shouldRequeue = false;
+            } else if (requeue) {
+                shouldRequeue = scheduledLifecycleService.retry(assignment, reason, closedAt);
+            } else if (shouldCancelScheduled(status, reason)) {
+                scheduledLifecycleService.cancel(assignment, closedAt);
+            }
+        }
+        if (shouldRequeue) {
             if (assignment.getUrgentTaskId() != null) {
                 urgentTaskService.markWaiting(assignment.getUrgentTaskId(), closedAt);
             } else {
@@ -229,5 +265,11 @@ public class TaskAssignmentService {
             dispatchQueueService.requeue(assignment);
         }
         return true;
+    }
+
+    private boolean shouldCancelScheduled(String status, String reason) {
+        return "INVALID".equals(status)
+                || "CANCELLED".equals(status)
+                || reason != null && reason.startsWith("administrator ");
     }
 }

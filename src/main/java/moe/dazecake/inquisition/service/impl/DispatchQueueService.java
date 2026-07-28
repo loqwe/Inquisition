@@ -219,9 +219,16 @@ public class DispatchQueueService {
     public void restoreBest(Long accountId, LocalDateTime now) {
         var intent = resolve(accountId, now);
         removeQueueEntry(accountId);
-        if (intent != null) {
-            enqueue(intent);
+        if (intent == null) {
+            return;
         }
+        if (DispatchIntent.SOURCE_SCHEDULED.equals(intent.getSource())) {
+            runService.findActiveByAccount(accountId)
+                    .filter(run -> Objects.equals(run.getId(), intent.getScheduledRunId()))
+                    .ifPresent(run -> enqueueScheduled(run, now));
+            return;
+        }
+        enqueue(intent);
     }
 
     public int enqueueScheduledRuns(List<AccountScheduledRunEntity> runs, LocalDateTime now) {

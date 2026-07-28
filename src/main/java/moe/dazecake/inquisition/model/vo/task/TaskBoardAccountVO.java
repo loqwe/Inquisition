@@ -12,6 +12,8 @@ public class TaskBoardAccountVO {
     private String name;
     private String account;
     private String taskType;
+    private String dispatchSource;
+    private Long scheduledRunId;
     private Long agent;
     private LocalDateTime expireTime;
     private Boolean returnedFromUrgent;

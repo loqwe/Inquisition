@@ -82,4 +82,15 @@ public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchC
     int completePendingActivation(@Param("accountId") Long accountId,
                                   @Param("scheduleTime") LocalTime scheduleTime,
                                   @Param("nextScheduledAt") LocalDateTime nextScheduledAt);
+
+    @Update({
+            "UPDATE account_dispatch_config",
+            "SET next_scheduled_at = #{nextScheduledAt}",
+            "WHERE account_id = #{accountId}",
+            "AND dispatch_mode = 'SCHEDULED'",
+            "AND activation_pending = 0",
+            "AND next_scheduled_at IS NULL"
+    })
+    int scheduleNext(@Param("accountId") Long accountId,
+                     @Param("nextScheduledAt") LocalDateTime nextScheduledAt);
 }

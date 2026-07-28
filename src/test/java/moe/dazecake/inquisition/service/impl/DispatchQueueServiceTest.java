@@ -229,6 +229,24 @@ class DispatchQueueServiceTest {
                 service.resolve(9L, NOW).getSource());
     }
 
+    @Test
+    void restoreBestReleasesAnExpiredScheduledRetryBeforeEnqueueingIt() {
+        var service = service();
+        var run = scheduledRun(41L, 9L, NOW.minusHours(1),
+                AccountScheduledRunService.STATUS_RETRY_WAIT)
+                .setNextRetryAt(NOW.minusSeconds(1));
+        when(service.configService.isAuto(9L)).thenReturn(false);
+        when(service.runService.findActiveByAccount(9L)).thenReturn(Optional.of(run));
+        when(service.runService.findById(41L)).thenReturn(Optional.of(run));
+        when(service.runService.markWaiting(41L)).thenReturn(true);
+
+        service.restoreBest(9L, NOW);
+
+        verify(service.runService).markWaiting(41L);
+        assertEquals(AccountScheduledRunService.STATUS_WAITING, run.getStatus());
+        assertEquals(List.of(9L), service.dynamicInfo.getWaitUserList());
+    }
+
     private static DispatchQueueService service() {
         var service = new DispatchQueueService();
         service.dynamicInfo = new DynamicInfo();

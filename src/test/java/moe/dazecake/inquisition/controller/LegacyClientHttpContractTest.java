@@ -1,9 +1,19 @@
 package moe.dazecake.inquisition.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.heartbeat.HeartBeatDTO;
 import moe.dazecake.inquisition.model.dto.log.AddLogDTO;
+import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
+import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Fight;
+import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.service.impl.HeartBeatServiceImpl;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
+import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import moe.dazecake.inquisition.service.impl.TaskServiceImpl;
 import moe.dazecake.inquisition.utils.Result;
 import org.junit.jupiter.api.Test;
@@ -12,8 +22,14 @@ import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -23,6 +39,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class LegacyClientHttpContractTest {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
 
     @Test
     void legacyHeartbeatBindsMissingMetadataAsNull() throws Exception {
@@ -101,5 +119,55 @@ class LegacyClientHttpContractTest {
         var captor = ArgumentCaptor.forClass(AddLogDTO.class);
         verify(service).addLog(captor.capture(), eq(false));
         assertEquals("device-1", captor.getValue().getFrom());
+    }
+
+    @Test
+    void normalDevicePayloadIsIdenticalAcrossAutoManualAndScheduledDispatchSources() {
+        var auto = normalDevicePayload(DispatchIntent.SOURCE_AUTO, null, "assignment-auto");
+        var manual = normalDevicePayload(DispatchIntent.SOURCE_MANUAL, null, "assignment-manual");
+        var scheduled = normalDevicePayload(
+                DispatchIntent.SOURCE_SCHEDULED, 41L, "assignment-scheduled");
+
+        assertEquals(auto, manual);
+        assertEquals(auto, scheduled);
+    }
+
+    private ObjectNode normalDevicePayload(String source, Long scheduledRunId, String assignmentId) {
+        var config = new ConfigEntity();
+        config.getDaily().setFight(new ArrayList<>(List.of(new Fight("1-7", 3))));
+        config.getDaily().setMail(true);
+        config.getDaily().setFriend(true);
+        config.getDaily().setCredit(true);
+        config.getDaily().setTask(true);
+        var fixedAt = LocalDateTime.of(2026, 7, 28, 19, 30);
+        var account = new AccountEntity().setId(7L).setName("账号7")
+                .setAccount("16603003649").setPassword("fixture-password")
+                .setTaskType("daily").setConfig(config)
+                .setCreateTime(fixedAt.minusDays(1)).setUpdateTime(fixedAt)
+                .setExpireTime(fixedAt.plusMonths(1));
+        var assignment = new TaskAssignmentEntity().setAssignmentId(assignmentId)
+                .setAccountId(7L).setTaskType("daily")
+                .setTaskMode(TaskAssignmentService.MODE_NORMAL)
+                .setDispatchSource(source).setScheduledRunId(scheduledRunId);
+
+        AccountDTO payload = ReflectionTestUtils.invokeMethod(
+                new TaskServiceImpl(), "buildTaskAccountDTO", account, assignment);
+        var tree = (ObjectNode) OBJECT_MAPPER.valueToTree(payload);
+
+        assertEquals("daily", tree.path("taskType").asText());
+        assertTrue(tree.path("config").has("daily"));
+        assertNoDispatchField(tree, "dispatchSource");
+        assertNoDispatchField(tree, "scheduledRunId");
+        assertNoDispatchField(tree, "dispatchMode");
+        assertNoDispatchField(tree, "scheduleTime");
+        assertNoDispatchField(tree, "nextScheduledAt");
+        assertNoDispatchField(tree, "scheduleStatus");
+        tree.remove("assignmentId");
+        return tree;
+    }
+
+    private void assertNoDispatchField(JsonNode tree, String fieldName) {
+        assertFalse(tree.findValue(fieldName) != null,
+                () -> "legacy device payload exposed " + fieldName);
     }
 }

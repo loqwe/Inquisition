@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import org.springframework.stereotype.Service;
 
@@ -34,6 +35,9 @@ public class TaskRecoveryService {
     @Resource
     DispatchQueueService dispatchQueueService;
 
+    @Resource
+    AccountScheduledRunLifecycleService scheduledLifecycleService;
+
     public void recoverDeviceOffline(String deviceToken, LocalDateTime now) {
         var assignment = taskAssignmentService.findByDevice(deviceToken).orElse(null);
         if (assignment == null) {
@@ -63,21 +67,30 @@ public class TaskRecoveryService {
                 .map(result -> result.getLastOnlineAt() != null
                         && !result.getLastOnlineAt().isBefore(assignment.getAssignedAt()))
                 .orElse(false);
+        var recoveryReason = observedAfterAssignment
+                ? "device offline after game activity was observed"
+                : "device offline during task";
         if (!taskAssignmentService.closeAssignment(assignment, "REVOKED",
-                observedAfterAssignment ? "device offline after game activity was observed"
-                        : "device offline during task", false)) {
+                recoveryReason, false)) {
             return;
         }
 
         var requeueAt = observedAfterAssignment
                 ? now.plusMinutes(STARTED_TASK_COOLDOWN_MINUTES) : now;
-        requeue(account, assignment, requeueAt, now, observedAfterAssignment
+        requeue(account, assignment, requeueAt, now, recoveryReason, observedAfterAssignment
                 ? "设备离线，已校准游戏状态，10分钟后重新排队"
                 : "设备离线，任务已重新排队");
     }
 
     private void requeue(AccountEntity account, TaskAssignmentEntity assignment,
-                         LocalDateTime eligibleAt, LocalDateTime now, String message) {
+                         LocalDateTime eligibleAt, LocalDateTime now,
+                         String reason, String message) {
+        if (DispatchIntent.SOURCE_SCHEDULED.equals(assignment.getDispatchSource())
+                && assignment.getScheduledRunId() != null
+                && !scheduledLifecycleService.retry(assignment, reason, eligibleAt)) {
+            notifyUser(account, "设备离线，调度配置已切换，旧任务不再排队");
+            return;
+        }
         if (eligibleAt.isAfter(now)) {
             dynamicInfo.getFreezeUserInfoMap().put(account.getId(), eligibleAt);
             dynamicInfo.getCooldownReasonMap().put(account.getId(), "deviceOffline");

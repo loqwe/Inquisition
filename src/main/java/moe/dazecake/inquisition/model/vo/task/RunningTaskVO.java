@@ -14,6 +14,8 @@ public class RunningTaskVO {
     private String account;
     private String taskType;
     private String taskMode;
+    private String dispatchSource;
+    private Long scheduledRunId;
     private Boolean urgent;
     private String deviceName;
     private String deviceToken;

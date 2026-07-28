@@ -6,6 +6,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentHistoryEntity;
 import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,89 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TaskAssignmentServiceTest {
+
+    @Test
+    void completedScheduledAssignmentCompletesTheSameRunWithoutRequeueing() {
+        var service = assignmentService();
+        var assignment = scheduledAssignment();
+        when(service.assignmentMapper.deleteById("scheduled-assignment")).thenReturn(1);
+        when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
+
+        assertTrue(service.closeAssignment(
+                assignment, "COMPLETED", "device reported completion", false));
+
+        verify(service.scheduledLifecycleService).complete(eq(assignment), any(LocalDateTime.class));
+        verify(service.scheduledLifecycleService, never()).retry(any(), any(), any());
+        verify(service.dispatchQueueService, never()).requeue(any());
+    }
+
+    @Test
+    void administratorTerminationCancelsTheScheduledRunWithoutRequeueing() {
+        var service = assignmentService();
+        var assignment = scheduledAssignment();
+        when(service.assignmentMapper.deleteById("scheduled-assignment")).thenReturn(1);
+        when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
+
+        assertTrue(service.closeAssignment(
+                assignment, "REVOKED", "administrator halted task", false));
+
+        verify(service.scheduledLifecycleService).cancel(eq(assignment), any(LocalDateTime.class));
+        verify(service.dispatchQueueService, never()).requeue(any());
+    }
+
+    @Test
+    void scheduledAssignmentPersistsItsServerOnlySourceAndStartsTheSameRun() {
+        var service = new TaskAssignmentService();
+        service.assignmentMapper = mock(TaskAssignmentMapper.class);
+        service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.dynamicInfo = new DynamicInfo();
+        when(service.assignmentMapper.insert(any(TaskAssignmentEntity.class))).thenReturn(1);
+        var now = LocalDateTime.of(2026, 7, 28, 19, 30);
+        var account = new AccountEntity().setId(7L).setTaskType("daily");
+        var intent = DispatchIntent.scheduled(7L, 41L, now);
+
+        var assignment = service.createAssignment(account, "device-1", now,
+                TaskAssignmentService.MODE_NORMAL, null, intent);
+
+        assertEquals(DispatchIntent.SOURCE_SCHEDULED, assignment.getDispatchSource());
+        assertEquals(41L, assignment.getScheduledRunId());
+        assertEquals(TaskAssignmentService.MODE_NORMAL, assignment.getTaskMode());
+        verify(service.scheduledLifecycleService).start(intent);
+        verify(service.assignmentMapper).insert(assignment);
+    }
+
+    @Test
+    void closingScheduledAssignmentArchivesSourceAndSuppressesPendingModeRequeue() {
+        var service = new TaskAssignmentService();
+        service.assignmentMapper = mock(TaskAssignmentMapper.class);
+        service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.dynamicInfo = new DynamicInfo();
+        when(service.assignmentMapper.deleteById("scheduled-assignment")).thenReturn(1);
+        when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
+        when(service.scheduledLifecycleService.retry(any(), any(), any())).thenReturn(false);
+        var assignment = new TaskAssignmentEntity().setAssignmentId("scheduled-assignment")
+                .setAccountId(7L).setDeviceToken("device-1").setTaskType("daily")
+                .setTaskMode(TaskAssignmentService.MODE_NORMAL)
+                .setDispatchSource(DispatchIntent.SOURCE_SCHEDULED)
+                .setScheduledRunId(41L)
+                .setAssignedAt(LocalDateTime.of(2026, 7, 28, 19, 30));
+
+        assertTrue(service.closeAssignment(assignment, "TIMED_OUT", "two hour limit", true));
+
+        var history = ArgumentCaptor.forClass(TaskAssignmentHistoryEntity.class);
+        verify(service.historyMapper).insert(history.capture());
+        assertEquals(DispatchIntent.SOURCE_SCHEDULED, history.getValue().getDispatchSource());
+        assertEquals(41L, history.getValue().getScheduledRunId());
+        verify(service.scheduledLifecycleService).retry(eq(assignment), eq("two hour limit"),
+                any(LocalDateTime.class));
+        verify(service.dispatchQueueService, never()).requeue(assignment);
+    }
 
     @Test
     void createsATwoHourHardLeaseAndMirrorsItInMemory() {
@@ -254,5 +338,25 @@ class TaskAssignmentServiceTest {
 
         assertTrue(service.dynamicInfo.getHaltList().contains("device-1"));
         verify(service.dispatchQueueService).requeue(assignment);
+    }
+
+    private static TaskAssignmentService assignmentService() {
+        var service = new TaskAssignmentService();
+        service.assignmentMapper = mock(TaskAssignmentMapper.class);
+        service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.dynamicInfo = new DynamicInfo();
+        return service;
+    }
+
+    private static TaskAssignmentEntity scheduledAssignment() {
+        return new TaskAssignmentEntity().setAssignmentId("scheduled-assignment")
+                .setAccountId(7L).setDeviceToken("device-1").setTaskType("daily")
+                .setTaskMode(TaskAssignmentService.MODE_NORMAL)
+                .setDispatchSource(DispatchIntent.SOURCE_SCHEDULED)
+                .setScheduledRunId(41L)
+                .setAssignedAt(LocalDateTime.of(2026, 7, 28, 19, 30));
     }
 }
