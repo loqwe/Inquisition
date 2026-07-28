@@ -17,6 +17,7 @@ import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.DeviceService;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.stereotype.Service;
 
@@ -36,6 +37,9 @@ public class DeviceServiceImpl implements DeviceService {
 
     @Resource
     AccountMapper accountMapper;
+
+    @Resource
+    DeviceRuntimeProjectionService deviceRuntimeProjectionService;
 
     @Override
     public void addDevice(AddDeviceDTO addDeviceDTO) {
@@ -80,11 +84,10 @@ public class DeviceServiceImpl implements DeviceService {
     @Override
     public LoadDeviceVO getLoadDevice() {
         var result = new LoadDeviceVO();
-        var devices = deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
-                .eq(DeviceEntity::getDelete, 0)
-        );
+        var devices = deviceRuntimeProjectionService.project(GameDayClock.now());
 
-        for (DeviceEntity device : devices) {
+        for (var projection : devices) {
+            var device = projection.getDevice();
             if (!dynamicInfo.getDeviceStatusMap().containsKey(device.getDeviceToken())) {
                 dynamicInfo.getDeviceStatusMap().put(device.getDeviceToken(), 0);
             }
@@ -102,6 +105,12 @@ public class DeviceServiceImpl implements DeviceService {
             loadDevice.setExpireTime(device.getExpireTime());
             loadDevice.setDelete(device.getDelete());
             loadDevice.setStatus(dynamicInfo.getDeviceStatusMap().get(device.getDeviceToken()));
+            loadDevice.setRuntimeState(projection.getRuntimeState());
+            loadDevice.setLastHeartbeatAt(projection.getLastHeartbeatAt());
+            loadDevice.setOfflineSince(projection.getOfflineSince());
+            loadDevice.setSuspendedUntil(projection.getSuspendedUntil());
+            loadDevice.setCurrentAccountId(projection.getCurrentAccountId());
+            loadDevice.setCurrentAccountName(projection.getCurrentAccountName());
             result.getLoadDeviceList().add(loadDevice);
         }
         return result;
