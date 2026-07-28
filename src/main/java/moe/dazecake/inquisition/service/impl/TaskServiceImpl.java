@@ -823,18 +823,45 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public HashMap<Long, AccountCooldownVO> getActiveCooldownTaskInfoMap() {
         restoreExpiredCooldownTasks();
+        return snapshotActiveCooldownTaskInfoMap(GameDayClock.now());
+    }
+
+    public HashMap<Long, AccountCooldownVO> snapshotActiveCooldownTaskInfoMap(LocalDateTime requestedNow) {
+        var now = requestedNow == null ? GameDayClock.now() : requestedNow;
+        var activeUntil = new LinkedHashMap<Long, LocalDateTime>();
+        synchronized (dynamicInfo.getFreezeUserInfoMap()) {
+            dynamicInfo.getFreezeUserInfoMap().forEach((id, freezeUntil) -> {
+                if (id != null && freezeUntil != null && freezeUntil.isAfter(now)) {
+                    activeUntil.put(id, freezeUntil);
+                }
+            });
+        }
+
         var result = new HashMap<Long, AccountCooldownVO>();
-        getActiveCooldownTaskMap().forEach((id, freezeUntil) -> {
-            var account = accountMapper.selectById(id);
+        if (activeUntil.isEmpty()) {
+            return result;
+        }
+
+        var reasons = new HashMap<Long, String>();
+        synchronized (dynamicInfo.getCooldownReasonMap()) {
+            activeUntil.keySet().forEach(id -> reasons.put(id,
+                    dynamicInfo.getCooldownReasonMap().getOrDefault(id, "unknown")));
+        }
+        var accounts = accountMapper.selectBatchIds(activeUntil.keySet());
+        if (accounts == null) {
+            return result;
+        }
+        accounts.forEach(account -> {
             if (isDeleted(account)) {
                 return;
             }
-            var reason = dynamicInfo.getCooldownReasonMap().getOrDefault(id, "unknown");
+            var id = account.getId();
+            var reason = reasons.getOrDefault(id, "unknown");
             result.put(id, new AccountCooldownVO(
-                    id,
+                    account.getId(),
                     account.getName(),
                     account.getAccount(),
-                    freezeUntil,
+                    activeUntil.get(id),
                     reason,
                     cooldownReasonMessage(reason)
             ));

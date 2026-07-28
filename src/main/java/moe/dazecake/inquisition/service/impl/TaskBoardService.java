@@ -8,6 +8,7 @@ import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
 import moe.dazecake.inquisition.model.local.DispatchIntent;
+import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.model.vo.task.RunningTaskVO;
 import moe.dazecake.inquisition.model.vo.task.TaskBoardAccountVO;
 import moe.dazecake.inquisition.model.vo.task.TaskBoardSummaryVO;
@@ -57,8 +58,17 @@ public class TaskBoardService {
 
     public TaskBoardVO getBoard(LocalDateTime requestedNow) {
         var now = requestedNow == null ? GameDayClock.now() : requestedNow;
-        var gameDay = GameDayClock.gameDay(now);
         taskService.restoreExpiredCooldownTasks();
+        return buildSnapshot(now);
+    }
+
+    public TaskBoardVO getReadOnlySnapshot(LocalDateTime requestedNow) {
+        var now = requestedNow == null ? GameDayClock.now() : requestedNow;
+        return buildSnapshot(now);
+    }
+
+    private TaskBoardVO buildSnapshot(LocalDateTime now) {
+        var gameDay = GameDayClock.gameDay(now);
 
         var activeUrgent = urgentTaskService.findActiveForGameDay(gameDay);
         var allUrgent = urgentTaskService.findAllForGameDay(gameDay);
@@ -128,7 +138,10 @@ public class TaskBoardService {
                                 Comparator.nullsLast(Comparator.naturalOrder())))
                 .collect(Collectors.toList());
 
-        var cooldownRows = new ArrayList<>(taskService.getActiveCooldownTaskInfoMap().values());
+        var cooldownSnapshot = taskService.snapshotActiveCooldownTaskInfoMap(now);
+        var cooldownRows = cooldownSnapshot == null
+                ? new ArrayList<AccountCooldownVO>()
+                : new ArrayList<>(cooldownSnapshot.values());
         cooldownRows.sort(Comparator.comparing(item -> item.getUntil(),
                 Comparator.nullsLast(Comparator.naturalOrder())));
 
