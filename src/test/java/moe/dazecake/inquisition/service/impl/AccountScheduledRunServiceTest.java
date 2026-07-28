@@ -1,24 +1,41 @@
 package moe.dazecake.inquisition.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
 import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
+import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
 import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AccountScheduledRunServiceTest {
@@ -35,7 +52,7 @@ class AccountScheduledRunServiceTest {
 
     @Test
     void createsOneWaitingRunForTheScheduledOccurrence() {
-        var service = service();
+        var service = configuredService();
         var scheduledFor = LocalDateTime.of(2026, 7, 28, 3, 30);
         when(service.runMapper.selectOne(any())).thenReturn(null).thenReturn(null);
         when(service.runMapper.insert(any())).thenAnswer(invocation -> {
@@ -58,7 +75,7 @@ class AccountScheduledRunServiceTest {
 
     @Test
     void repeatedCreationForTheSameOccurrenceReturnsTheExistingRun() {
-        var service = service();
+        var service = configuredService();
         var scheduledFor = LocalDateTime.of(2026, 7, 28, 19, 30);
         var existing = run(41L, 7L, scheduledFor, AccountScheduledRunService.STATUS_WAITING);
         when(service.runMapper.selectOne(any())).thenReturn(existing);
@@ -71,7 +88,7 @@ class AccountScheduledRunServiceTest {
 
     @Test
     void aDifferentOccurrenceReusesTheAccountsExistingActiveRun() {
-        var service = service();
+        var service = configuredService();
         var requested = LocalDateTime.of(2026, 7, 29, 19, 30);
         var existing = run(41L, 7L, requested.minusDays(1),
                 AccountScheduledRunService.STATUS_RETRY_WAIT);
@@ -84,19 +101,118 @@ class AccountScheduledRunServiceTest {
     }
 
     @Test
-    void duplicateKeyRaceReturnsTheRunCreatedByTheOtherTransaction() {
+    void createWaitingLocksTheAccountConfigurationBeforeReadingRuns() {
+        var service = configuredService();
+        var configMapper = configMapper(service);
+        var scheduledFor = LocalDateTime.of(2026, 7, 28, 19, 30);
+        var existing = run(41L, 7L, scheduledFor, AccountScheduledRunService.STATUS_WAITING);
+        when(service.runMapper.selectOne(any())).thenReturn(existing);
+
+        assertSame(existing, service.createWaiting(7L, scheduledFor));
+
+        var order = inOrder(configMapper, service.runMapper);
+        order.verify(configMapper).selectByIdForUpdate(7L);
+        order.verify(service.runMapper).selectOne(any());
+    }
+
+    @Test
+    void createWaitingRejectsAnAccountWithoutAConfigurationRow() {
         var service = service();
+        var configMapper = mock(AccountDispatchConfigMapper.class);
+        ReflectionTestUtils.setField(service, "configMapper", configMapper);
+        when(configMapper.selectByIdForUpdate(7L)).thenReturn(null);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.createWaiting(7L, LocalDateTime.of(2026, 7, 28, 19, 30)));
+
+        verify(configMapper).selectByIdForUpdate(7L);
+        verifyNoInteractions(service.runMapper);
+    }
+
+    @Test
+    void duplicateKeyRaceUsesALockingReadToSeeTheConcurrentRun() {
+        var service = configuredService();
         var scheduledFor = LocalDateTime.of(2026, 7, 28, 19, 30);
         var concurrent = run(41L, 7L, scheduledFor, AccountScheduledRunService.STATUS_WAITING);
-        when(service.runMapper.selectOne(any()))
-                .thenReturn(null)
-                .thenReturn(null)
-                .thenReturn(concurrent);
-        when(service.runMapper.insert(any())).thenThrow(new DuplicateKeyException("slot already created"));
+        var duplicateAttempted = new AtomicBoolean();
+        when(service.runMapper.selectOne(any())).thenAnswer(invocation -> {
+            Wrapper<?> query = invocation.getArgument(0);
+            return duplicateAttempted.get()
+                    && lastSql(query).contains("FOR UPDATE")
+                    ? concurrent
+                    : null;
+        });
+        when(service.runMapper.insert(any())).thenAnswer(invocation -> {
+            duplicateAttempted.set(true);
+            throw new DuplicateKeyException("slot already created");
+        });
 
         var result = service.createWaiting(7L, scheduledFor);
 
         assertEquals(concurrent, result);
+        verify(service.runMapper, times(3)).selectOne(any());
+    }
+
+    @Test
+    void concurrentDifferentOccurrencesReuseOneActiveRun() throws Exception {
+        var service = configuredService();
+        var configMapper = configMapper(service);
+        var rowLock = new ReentrantLock();
+        var unlockedReaders = new CyclicBarrier(2);
+        var persisted = new AtomicReference<AccountScheduledRunEntity>();
+        var inserts = new AtomicInteger();
+        Map<Long, AtomicInteger> readsByThread = new ConcurrentHashMap<>();
+        var config = new AccountDispatchConfigEntity().setAccountId(7L);
+        when(configMapper.selectByIdForUpdate(7L)).thenAnswer(invocation -> {
+            rowLock.lock();
+            return config;
+        });
+        when(service.runMapper.selectOne(any())).thenAnswer(invocation -> {
+            var reads = readsByThread.computeIfAbsent(
+                    Thread.currentThread().getId(), ignored -> new AtomicInteger());
+            if (reads.incrementAndGet() % 2 == 1) {
+                return null;
+            }
+            var active = persisted.get();
+            if (active != null) {
+                if (rowLock.isHeldByCurrentThread()) {
+                    rowLock.unlock();
+                }
+                return active;
+            }
+            if (!rowLock.isHeldByCurrentThread()) {
+                unlockedReaders.await(5, TimeUnit.SECONDS);
+            }
+            return null;
+        });
+        when(service.runMapper.insert(any())).thenAnswer(invocation -> {
+            var created = invocation.<AccountScheduledRunEntity>getArgument(0)
+                    .setId(40L + inserts.incrementAndGet());
+            persisted.compareAndSet(null, created);
+            if (rowLock.isHeldByCurrentThread()) {
+                rowLock.unlock();
+            }
+            return 1;
+        });
+        var executor = Executors.newFixedThreadPool(2, runnable -> {
+            var thread = new Thread(runnable, "scheduled-run-race-test");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+        try {
+            var first = executor.submit(() -> service.createWaiting(
+                    7L, LocalDateTime.of(2026, 7, 28, 19, 30)));
+            var second = executor.submit(() -> service.createWaiting(
+                    7L, LocalDateTime.of(2026, 7, 29, 19, 30)));
+
+            var firstResult = first.get(5, TimeUnit.SECONDS);
+            var secondResult = second.get(5, TimeUnit.SECONDS);
+            assertEquals(1, inserts.get());
+            assertSame(firstResult, secondResult);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -164,18 +280,48 @@ class AccountScheduledRunServiceTest {
     }
 
     @Test
-    void markWaitingRequeuesRunningWithoutResettingAttempts() {
+    void markWaitingRejectsRunningWithoutWriting() {
         var service = service();
         var run = run(41L, 7L, LocalDateTime.of(2026, 7, 28, 19, 30),
                 AccountScheduledRunService.STATUS_RUNNING).setAttemptCount(3);
+        when(service.runMapper.selectById(41L)).thenReturn(run);
+
+        assertFalse(service.markWaiting(41L));
+
+        assertEquals(AccountScheduledRunService.STATUS_RUNNING, run.getStatus());
+        assertEquals(3, run.getAttemptCount());
+        assertNull(run.getNextRetryAt());
+        verify(service.runMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void markWaitingIsIdempotentForWaitingWithoutWriting() {
+        var service = service();
+        var run = run(41L, 7L, LocalDateTime.of(2026, 7, 28, 19, 30),
+                AccountScheduledRunService.STATUS_WAITING);
+        when(service.runMapper.selectById(41L)).thenReturn(run);
+
+        assertTrue(service.markWaiting(41L));
+
+        verify(service.runMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void markWaitingReleasesRetryWait() {
+        var service = service();
+        var run = run(41L, 7L, LocalDateTime.of(2026, 7, 28, 19, 30),
+                AccountScheduledRunService.STATUS_RETRY_WAIT)
+                .setNextRetryAt(LocalDateTime.of(2026, 7, 28, 20, 30))
+                .setLastError("offline");
         when(service.runMapper.selectById(41L)).thenReturn(run);
         when(service.runMapper.update(any(), any())).thenReturn(1);
 
         assertTrue(service.markWaiting(41L));
 
         assertEquals(AccountScheduledRunService.STATUS_WAITING, run.getStatus());
-        assertEquals(3, run.getAttemptCount());
         assertNull(run.getNextRetryAt());
+        assertNull(run.getLastError());
+        verify(service.runMapper).update(any(), any());
     }
 
     @Test
@@ -243,7 +389,7 @@ class AccountScheduledRunServiceTest {
 
     @Test
     void everyAttemptedWriteRequiresExactlyOneAffectedRow() {
-        var service = service();
+        var service = configuredService();
         var scheduledFor = LocalDateTime.of(2026, 7, 28, 19, 30);
         when(service.runMapper.selectOne(any())).thenReturn(null).thenReturn(null);
         when(service.runMapper.insert(any())).thenReturn(0);
@@ -260,6 +406,25 @@ class AccountScheduledRunServiceTest {
         var service = new AccountScheduledRunService();
         service.runMapper = mock(AccountScheduledRunMapper.class);
         return service;
+    }
+
+    private static AccountScheduledRunService configuredService() {
+        var service = service();
+        var configMapper = mock(AccountDispatchConfigMapper.class);
+        ReflectionTestUtils.setField(service, "configMapper", configMapper);
+        when(configMapper.selectByIdForUpdate(any())).thenAnswer(invocation ->
+                new AccountDispatchConfigEntity().setAccountId(invocation.getArgument(0)));
+        return service;
+    }
+
+    private static AccountDispatchConfigMapper configMapper(AccountScheduledRunService service) {
+        return (AccountDispatchConfigMapper) ReflectionTestUtils.getField(service, "configMapper");
+    }
+
+    private static String lastSql(Wrapper<?> query) {
+        var lastSql = ReflectionTestUtils.getField(query, "lastSql");
+        var value = (String) ReflectionTestUtils.invokeMethod(lastSql, "getStringValue");
+        return value == null ? "" : value;
     }
 
     private static AccountScheduledRunEntity run(Long id, Long accountId,

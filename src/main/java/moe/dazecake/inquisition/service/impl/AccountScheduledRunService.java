@@ -2,6 +2,7 @@ package moe.dazecake.inquisition.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
 import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
 import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
 import moe.dazecake.inquisition.utils.GameDayClock;
@@ -35,16 +36,22 @@ public class AccountScheduledRunService {
     @Resource
     AccountScheduledRunMapper runMapper;
 
+    @Resource
+    AccountDispatchConfigMapper configMapper;
+
     @Transactional
     public AccountScheduledRunEntity createWaiting(Long accountId, LocalDateTime scheduledFor) {
         Objects.requireNonNull(accountId, "accountId");
         Objects.requireNonNull(scheduledFor, "scheduledFor");
 
-        var existingOccurrence = findByOccurrence(accountId, scheduledFor);
+        if (configMapper.selectByIdForUpdate(accountId) == null) {
+            throw new IllegalStateException("Account dispatch configuration does not exist");
+        }
+        var existingOccurrence = findByOccurrenceForUpdate(accountId, scheduledFor);
         if (existingOccurrence.isPresent()) {
             return existingOccurrence.get();
         }
-        var active = findActiveByAccount(accountId);
+        var active = findActiveByAccountForUpdate(accountId);
         if (active.isPresent()) {
             return active.get();
         }
@@ -60,7 +67,9 @@ public class AccountScheduledRunService {
                 throw new IllegalStateException("Unable to persist scheduled run");
             }
         } catch (DuplicateKeyException exception) {
-            return findByOccurrence(accountId, scheduledFor).orElseThrow(() -> exception);
+            return findByOccurrenceForUpdate(accountId, scheduledFor)
+                    .or(() -> findActiveByAccountForUpdate(accountId))
+                    .orElseThrow(() -> exception);
         }
         return created;
     }
@@ -69,11 +78,20 @@ public class AccountScheduledRunService {
         if (accountId == null) {
             return Optional.empty();
         }
-        var run = runMapper.selectOne(Wrappers.<AccountScheduledRunEntity>lambdaQuery()
+        return findActiveByAccount(accountId, false);
+    }
+
+    private Optional<AccountScheduledRunEntity> findActiveByAccountForUpdate(Long accountId) {
+        return findActiveByAccount(accountId, true);
+    }
+
+    private Optional<AccountScheduledRunEntity> findActiveByAccount(Long accountId, boolean forUpdate) {
+        var query = Wrappers.<AccountScheduledRunEntity>lambdaQuery()
                 .eq(AccountScheduledRunEntity::getAccountId, accountId)
                 .in(AccountScheduledRunEntity::getStatus, ACTIVE_STATUSES)
-                .orderByAsc(AccountScheduledRunEntity::getScheduledFor)
-                .last("LIMIT 1"));
+                .orderByAsc(AccountScheduledRunEntity::getScheduledFor);
+        query.last(forUpdate ? "LIMIT 1 FOR UPDATE" : "LIMIT 1");
+        var run = runMapper.selectOne(query);
         return run != null && isActiveStatus(run.getStatus())
                 ? Optional.of(run)
                 : Optional.empty();
@@ -139,7 +157,7 @@ public class AccountScheduledRunService {
         if (STATUS_WAITING.equals(run.getStatus())) {
             return true;
         }
-        return transition(run, Set.of(STATUS_RUNNING, STATUS_RETRY_WAIT), update -> update
+        return transition(run, Set.of(STATUS_RETRY_WAIT), update -> update
                         .set("status", STATUS_WAITING)
                         .set("next_retry_at", null)
                         .set("last_error", null),
@@ -180,10 +198,23 @@ public class AccountScheduledRunService {
 
     private Optional<AccountScheduledRunEntity> findByOccurrence(Long accountId,
                                                                  LocalDateTime scheduledFor) {
-        return Optional.ofNullable(runMapper.selectOne(
-                Wrappers.<AccountScheduledRunEntity>lambdaQuery()
-                        .eq(AccountScheduledRunEntity::getAccountId, accountId)
-                        .eq(AccountScheduledRunEntity::getScheduledFor, scheduledFor)));
+        return findByOccurrence(accountId, scheduledFor, false);
+    }
+
+    private Optional<AccountScheduledRunEntity> findByOccurrenceForUpdate(
+            Long accountId, LocalDateTime scheduledFor) {
+        return findByOccurrence(accountId, scheduledFor, true);
+    }
+
+    private Optional<AccountScheduledRunEntity> findByOccurrence(
+            Long accountId, LocalDateTime scheduledFor, boolean forUpdate) {
+        var query = Wrappers.<AccountScheduledRunEntity>lambdaQuery()
+                .eq(AccountScheduledRunEntity::getAccountId, accountId)
+                .eq(AccountScheduledRunEntity::getScheduledFor, scheduledFor);
+        if (forUpdate) {
+            query.last("FOR UPDATE");
+        }
+        return Optional.ofNullable(runMapper.selectOne(query));
     }
 
     private boolean terminalTransition(Long id, Set<String> allowedStatuses,
