@@ -32,6 +32,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class TaskServiceImplTest {
@@ -71,13 +72,13 @@ class TaskServiceImplTest {
         service.dynamicInfo.getFreezeUserInfoMap().put(423L, until);
         service.dynamicInfo.getCooldownReasonMap().put(423L, "lineBusy");
 
-        when(service.accountMapper.selectById(423L)).thenReturn(new AccountEntity()
+        when(service.accountMapper.selectBatchIds(any())).thenReturn(List.of(new AccountEntity()
                 .setId(423L)
                 .setName("账号172B1")
                 .setAccount("18307339567")
                 .setFreeze(0)
                 .setDelete(0)
-                .setExpireTime(LocalDateTime.now().plusDays(1)));
+                .setExpireTime(LocalDateTime.now().plusDays(1))));
 
         AccountCooldownVO vo = service.getActiveCooldownTaskInfoMap().get(423L);
 
@@ -86,6 +87,30 @@ class TaskServiceImplTest {
         assertEquals("18307339567", vo.getAccount());
         assertEquals(until, vo.getUntil());
         assertEquals("lineBusy", vo.getReason());
+    }
+
+    @Test
+    void cooldownSnapshotFiltersExpiredEntriesWithoutMutatingRuntimeState() {
+        var service = new TaskServiceImpl();
+        service.dynamicInfo = new DynamicInfo();
+        service.accountMapper = mock(AccountMapper.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        var now = LocalDateTime.of(2026, 7, 29, 10, 0);
+        service.dynamicInfo.getFreezeUserInfoMap().put(7L, now.minusMinutes(1));
+        service.dynamicInfo.getFreezeUserInfoMap().put(8L, now.plusMinutes(30));
+        service.dynamicInfo.getCooldownReasonMap().put(7L, "expired");
+        service.dynamicInfo.getCooldownReasonMap().put(8L, "lineBusy");
+        when(service.accountMapper.selectBatchIds(any())).thenReturn(List.of(
+                new AccountEntity().setId(8L).setName("账号8").setAccount("account-8")
+                        .setDelete(0).setFreeze(0).setExpireTime(now.plusDays(1))));
+
+        var snapshot = service.snapshotActiveCooldownTaskInfoMap(now);
+
+        assertEquals(List.of(8L), new ArrayList<>(snapshot.keySet()));
+        assertEquals("lineBusy", snapshot.get(8L).getReason());
+        assertTrue(service.dynamicInfo.getFreezeUserInfoMap().containsKey(7L));
+        assertTrue(service.dynamicInfo.getCooldownReasonMap().containsKey(7L));
+        verifyNoInteractions(service.dispatchQueueService);
     }
 
     @Test

@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -56,7 +57,7 @@ class TaskBoardServiceTest {
         var cooldowns = new HashMap<Long, AccountCooldownVO>();
         cooldowns.put(7L, new AccountCooldownVO(7L, "账号7", "account-7",
                 now.plusMinutes(10), "retryBackoff", "递增重试"));
-        when(service.taskService.getActiveCooldownTaskInfoMap()).thenReturn(cooldowns);
+        when(service.taskService.snapshotActiveCooldownTaskInfoMap(now)).thenReturn(cooldowns);
 
         var board = service.getBoard(now);
 
@@ -75,6 +76,24 @@ class TaskBoardServiceTest {
         assertEquals(2, board.getSummary().getInProgress());
         assertEquals(1, board.getSummary().getCoolingDown());
         assertEquals(1, board.getSummary().getFrozen());
+    }
+
+    @Test
+    void readOnlySnapshotDoesNotRestoreCooldownsOrMutateQueues() {
+        var service = service();
+        var now = LocalDateTime.of(2026, 7, 29, 10, 0);
+        service.dynamicInfo.setWaitUserList(new java.util.ArrayList<>(List.of(9L)));
+        service.dynamicInfo.getFreezeUserInfoMap().put(7L, now.minusMinutes(1));
+        service.dynamicInfo.getCooldownReasonMap().put(7L, "expired");
+        when(service.accountMapper.selectBatchIds(any())).thenReturn(List.of(account(9L, "账号9")));
+        when(service.taskService.snapshotActiveCooldownTaskInfoMap(now)).thenReturn(new HashMap<>());
+
+        service.getReadOnlySnapshot(now);
+
+        verify(service.taskService, never()).restoreExpiredCooldownTasks();
+        assertEquals(List.of(9L), service.dynamicInfo.getWaitUserList());
+        assertTrue(service.dynamicInfo.getFreezeUserInfoMap().containsKey(7L));
+        assertTrue(service.dynamicInfo.getCooldownReasonMap().containsKey(7L));
     }
 
     @Test
