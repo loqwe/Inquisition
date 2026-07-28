@@ -4,6 +4,8 @@ import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
 import moe.dazecake.inquisition.service.impl.FinalLoginSweepService;
 import moe.dazecake.inquisition.service.impl.AccountScheduledDispatchService;
 import moe.dazecake.inquisition.service.impl.AccountScheduledRunService;
+import moe.dazecake.inquisition.service.impl.DispatchQueueService;
+import moe.dazecake.inquisition.service.impl.PartialScheduledDispatchException;
 import moe.dazecake.inquisition.service.impl.ScheduledTaskMonitorService;
 import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import moe.dazecake.inquisition.service.impl.UrgentTaskService;
@@ -18,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -29,11 +32,12 @@ import static org.mockito.Mockito.when;
 class RunScriptTest {
 
     @Test
-    void startupRestoresAndScansScheduledRunsWithoutWritingTheLegacyQueue() {
+    void startupRestoresAndScansScheduledRunsThroughTheUnifiedQueue() {
         var script = new RunScript();
         script.dynamicInfo = new DynamicInfo();
         script.enableAccountSchedule = true;
         script.accountScheduledDispatchService = mock(AccountScheduledDispatchService.class);
+        script.dispatchQueueService = mock(DispatchQueueService.class);
         script.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
         var now = LocalDateTime.of(2026, 7, 28, 4, 5);
         var waiting = scheduledRun(41L, 7L, now.minusDays(1),
@@ -56,7 +60,8 @@ class RunScriptTest {
                 eq(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK),
                 eq("STARTUP_RECOVERY"), any(Runnable.class));
         verify(script.accountScheduledDispatchService).scan(now);
-        assertEquals(List.of(), script.dynamicInfo.getWaitUserList());
+        verify(script.dispatchQueueService).enqueueScheduledRuns(List.of(waiting), now);
+        verify(script.dispatchQueueService).enqueueScheduledRuns(List.of(waiting, retry), now);
     }
 
     @Test
@@ -72,6 +77,32 @@ class RunScriptTest {
         verify(script.scheduledTaskMonitor, never()).execute(
                 eq(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK),
                 eq("STARTUP_RECOVERY"), any(Runnable.class));
+    }
+
+    @Test
+    void startupAdmitsPartialScanResultsBeforeTheMonitorSeesTheFailure() {
+        var script = new RunScript();
+        script.enableAccountSchedule = true;
+        script.accountScheduledDispatchService = mock(AccountScheduledDispatchService.class);
+        script.dispatchQueueService = mock(DispatchQueueService.class);
+        script.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
+        var now = LocalDateTime.of(2026, 7, 28, 20, 0);
+        var waiting = scheduledRun(41L, 7L, now.minusMinutes(30),
+                AccountScheduledRunService.STATUS_WAITING);
+        when(script.accountScheduledDispatchService.restoreDispatchable(now)).thenReturn(List.of());
+        when(script.accountScheduledDispatchService.scan(now))
+                .thenThrow(new PartialScheduledDispatchException(1, List.of(waiting)));
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(2)).run();
+            return null;
+        }).when(script.scheduledTaskMonitor).execute(
+                eq(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK),
+                eq("STARTUP_RECOVERY"), any(Runnable.class));
+
+        assertThrows(PartialScheduledDispatchException.class,
+                () -> script.runAccountScheduledDispatchCatchUp(now));
+
+        verify(script.dispatchQueueService).enqueueScheduledRuns(List.of(waiting), now);
     }
 
     @Test
@@ -128,6 +159,7 @@ class RunScriptTest {
         script.dynamicInfo = new DynamicInfo();
         script.urgentTaskService = mock(UrgentTaskService.class);
         script.taskAssignmentService = mock(TaskAssignmentService.class);
+        script.dispatchQueueService = mock(DispatchQueueService.class);
         var now = LocalDateTime.of(2026, 7, 28, 2, 30);
         var gameDay = LocalDate.of(2026, 7, 27);
         var waiting = urgent(1L, 1L, UrgentTaskService.STATUS_WAITING, null);
@@ -144,8 +176,10 @@ class RunScriptTest {
 
         assertEquals(3, script.restoreUrgentLoginTasks(now));
 
-        assertEquals(List.of(1L, 2L, 4L), script.dynamicInfo.getWaitUserList());
         assertEquals(retryAt, script.dynamicInfo.getFreezeUserInfoMap().get(4L));
+        verify(script.dispatchQueueService).restoreBest(1L, now);
+        verify(script.dispatchQueueService).restoreBest(2L, now);
+        verify(script.dispatchQueueService).restoreBest(4L, now);
         verify(script.urgentTaskService).markWaiting(2L, now);
     }
 

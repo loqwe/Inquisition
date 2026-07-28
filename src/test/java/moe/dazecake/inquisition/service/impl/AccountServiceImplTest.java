@@ -168,6 +168,23 @@ class AccountServiceImplTest {
         assertEquals("custom-stage", captor.getValue().getConfig().getDaily().getFight().get(0).getLevel());
     }
 
+    @Test
+    void immediateStartUsesTheManualQueueIntentWithoutEditingDeviceData() {
+        var service = new AccountServiceImpl();
+        service.accountMapper = mock(AccountMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        var account = new AccountEntity().setId(1L).setDelete(0).setFreeze(0)
+                .setRefresh(1).setExpireTime(LocalDateTime.of(2099, 1, 1, 0, 0));
+        when(service.accountMapper.selectById(1L)).thenReturn(account);
+        when(service.dispatchQueueService.enqueueManual(1L)).thenReturn(true);
+
+        assertEquals("立即开始作战成功，等待分配作战服务器",
+                service.forceFightAccount(1L, true));
+
+        verify(service.dispatchQueueService).enqueueManual(1L);
+    }
+
     private static LogEntity loginLog(Long accountId, String title, LocalDateTime time) {
         return new LogEntity()
                 .setAccountId(accountId)

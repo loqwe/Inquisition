@@ -57,6 +57,9 @@ public class FinalLoginSweepService {
     @Resource
     DynamicInfo dynamicInfo;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     private LocalDate completedGameDay;
 
     public synchronized SweepResult runIfDue(LocalDateTime requestedNow) {
@@ -143,10 +146,7 @@ public class FinalLoginSweepService {
                     UrgentTaskService.PRIORITY_TWENTY_SIX, status, nextRetryAt, now);
         }
 
-        synchronized (dynamicInfo.getWaitUserList()) {
-            dynamicInfo.getWaitUserList().removeIf(queuedIds::contains);
-            dynamicInfo.getWaitUserList().addAll(0, queuedIds);
-        }
+        queuedIds.forEach(accountId -> dispatchQueueService.enqueueUrgent(accountId, now));
 
         var summary = "游戏日: " + gameDay + "\n有效日常账号: " + eligibleAccounts.size()
                 + "\n仍未登录: " + missingAccounts.size() + "\n等待加急: " + queuedIds.size()

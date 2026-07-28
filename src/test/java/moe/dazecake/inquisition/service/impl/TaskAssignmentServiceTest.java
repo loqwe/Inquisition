@@ -33,6 +33,7 @@ class TaskAssignmentServiceTest {
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.insert(any(TaskAssignmentEntity.class))).thenReturn(1);
 
         var now = LocalDateTime.of(2026, 7, 18, 13, 0);
@@ -55,6 +56,7 @@ class TaskAssignmentServiceTest {
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.insert(any(TaskAssignmentEntity.class))).thenReturn(1);
         var now = LocalDateTime.of(2026, 7, 28, 2, 5);
         var account = new AccountEntity().setId(7L).setTaskType("daily");
@@ -89,6 +91,7 @@ class TaskAssignmentServiceTest {
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.deleteById("assignment-1")).thenReturn(1);
         when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
 
@@ -110,7 +113,7 @@ class TaskAssignmentServiceTest {
         assertTrue(service.closeAssignment(assignment, "TIMED_OUT", "two hour limit", true));
 
         assertFalse(service.dynamicInfo.getWorkUserList().contains(398L));
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.dispatchQueueService).requeue(assignment);
         var historyCaptor = ArgumentCaptor.forClass(TaskAssignmentHistoryEntity.class);
         verify(service.historyMapper).insert(historyCaptor.capture());
         assertEquals(UrgentTaskService.MODE_LOGIN_ONLY, historyCaptor.getValue().getTaskMode());
@@ -125,6 +128,7 @@ class TaskAssignmentServiceTest {
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.deleteById("assignment-normal")).thenReturn(1);
         when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
         var urgent = new UrgentTaskEntity().setId(12L).setAccountId(398L)
@@ -141,7 +145,7 @@ class TaskAssignmentServiceTest {
 
         assertTrue(service.closeAssignment(assignment, "REVOKED", "device offline", true));
 
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.dispatchQueueService).requeue(assignment);
         verify(service.urgentTaskService).markWaiting(eq(12L), any(LocalDateTime.class));
     }
 
@@ -151,6 +155,7 @@ class TaskAssignmentServiceTest {
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.deleteById("assignment-1")).thenReturn(0);
         var assignment = new TaskAssignmentEntity()
                 .setAssignmentId("assignment-1")
@@ -169,6 +174,7 @@ class TaskAssignmentServiceTest {
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         var assignedAt = LocalDateTime.of(2026, 7, 19, 10, 0);
         var assignment = new TaskAssignmentEntity()
                 .setAssignmentId("assignment-restore")
@@ -231,6 +237,7 @@ class TaskAssignmentServiceTest {
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         var now = LocalDateTime.of(2026, 7, 19, 13, 0);
         var assignment = new TaskAssignmentEntity()
                 .setAssignmentId("assignment-expired")
@@ -246,6 +253,6 @@ class TaskAssignmentServiceTest {
         assertEquals(1, service.closeExpiredAssignments(now));
 
         assertTrue(service.dynamicInfo.getHaltList().contains("device-1"));
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.dispatchQueueService).requeue(assignment);
     }
 }

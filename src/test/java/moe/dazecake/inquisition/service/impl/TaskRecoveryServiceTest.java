@@ -29,6 +29,7 @@ class TaskRecoveryServiceTest {
         service.dynamicInfo = new DynamicInfo();
         service.messageService = mock(MessageServiceImpl.class);
         service.sklandCalibrationService = mock(SklandCalibrationService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         var assignment = assignment(0);
         var account = account();
         when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.of(assignment));
@@ -52,6 +53,7 @@ class TaskRecoveryServiceTest {
         service.dynamicInfo = new DynamicInfo();
         service.messageService = mock(MessageServiceImpl.class);
         service.sklandCalibrationService = mock(SklandCalibrationService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         var assignment = assignment(1).setAssignedAt(LocalDateTime.of(2026, 7, 19, 11, 0));
         var account = account();
         var now = LocalDateTime.of(2026, 7, 19, 12, 0);
@@ -65,7 +67,7 @@ class TaskRecoveryServiceTest {
         service.recoverDeviceOffline("device-1", now);
 
         assertEquals(now.plusMinutes(10), service.dynamicInfo.getFreezeUserInfoMap().get(398L));
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.dispatchQueueService).requeue(assignment);
         verify(service.messageService).push(account, "任务已回收", "设备离线，已校准游戏状态，10分钟后重新排队");
     }
 
@@ -75,6 +77,7 @@ class TaskRecoveryServiceTest {
         service.taskAssignmentService = mock(TaskAssignmentService.class);
         service.accountMapper = mock(AccountMapper.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         var offlineAt = LocalDateTime.of(2026, 7, 19, 12, 0);
         var newerAssignment = assignment(0).setAssignedAt(offlineAt.plusSeconds(1));
         when(service.taskAssignmentService.findByDevice("device-1"))

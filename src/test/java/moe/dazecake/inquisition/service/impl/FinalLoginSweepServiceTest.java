@@ -51,7 +51,8 @@ class FinalLoginSweepServiceTest {
         assertEquals(3, result.getMissingCount());
         assertEquals(1, result.getRunningCount());
         assertEquals(1, result.getCooldownCount());
-        assertEquals(List.of(1L, 4L, 99L), service.dynamicInfo.getWaitUserList());
+        verify(service.dispatchQueueService).enqueueUrgent(1L, now);
+        verify(service.dispatchQueueService).enqueueUrgent(4L, now);
         verify(service.urgentTaskService).upsert(eq(1L), eq(gameDay),
                 eq(UrgentTaskService.TRIGGER_TWENTY_SIX), eq(UrgentTaskService.MODE_LOGIN_ONLY),
                 eq(UrgentTaskService.PRIORITY_TWENTY_SIX), eq(UrgentTaskService.STATUS_WAITING),
@@ -146,6 +147,7 @@ class FinalLoginSweepServiceTest {
         service.messageService = mock(MessageServiceImpl.class);
         service.logService = mock(LogServiceImpl.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.taskAssignmentService.findAll()).thenReturn(List.of());
         return service;
     }

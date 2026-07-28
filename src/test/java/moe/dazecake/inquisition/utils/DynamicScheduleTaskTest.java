@@ -5,8 +5,12 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
+import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
 import moe.dazecake.inquisition.service.impl.AccountScheduledDispatchService;
+import moe.dazecake.inquisition.service.impl.AccountScheduledRunService;
+import moe.dazecake.inquisition.service.impl.DispatchQueueService;
+import moe.dazecake.inquisition.service.impl.PartialScheduledDispatchException;
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
@@ -30,6 +34,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -99,6 +104,7 @@ class DynamicScheduleTaskTest {
         scheduler.enableAccountSchedule = true;
         scheduler.scheduledTaskMonitor = mock(ScheduledTaskMonitorService.class);
         scheduler.accountScheduledDispatchService = mock(AccountScheduledDispatchService.class);
+        scheduler.dispatchQueueService = mock(DispatchQueueService.class);
         doAnswer(invocation -> {
             ((Runnable) invocation.getArgument(2)).run();
             return null;
@@ -112,6 +118,24 @@ class DynamicScheduleTaskTest {
         verify(scheduler.scheduledTaskMonitor).execute(
                 eq(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK), eq("CRON"), any(Runnable.class));
         verify(scheduler.accountScheduledDispatchService).scan(any(LocalDateTime.class));
+    }
+
+    @Test
+    void scheduledScanAdmitsSuccessfulRunsBeforeRethrowingAPartialFailure() {
+        var scheduler = new DynamicScheduleTask();
+        scheduler.accountScheduledDispatchService = mock(AccountScheduledDispatchService.class);
+        scheduler.dispatchQueueService = mock(DispatchQueueService.class);
+        var now = LocalDateTime.of(2026, 7, 28, 20, 0);
+        var waiting = new AccountScheduledRunEntity().setId(41L).setAccountId(7L)
+                .setScheduledFor(now.minusMinutes(30))
+                .setStatus(AccountScheduledRunService.STATUS_WAITING);
+        var failure = new PartialScheduledDispatchException(1, List.of(waiting));
+        when(scheduler.accountScheduledDispatchService.scan(now)).thenThrow(failure);
+
+        assertEquals(failure, assertThrows(PartialScheduledDispatchException.class,
+                () -> scheduler.runAccountScheduledDispatch(now)));
+
+        verify(scheduler.dispatchQueueService).enqueueScheduledRuns(List.of(waiting), now);
     }
 
     @Test

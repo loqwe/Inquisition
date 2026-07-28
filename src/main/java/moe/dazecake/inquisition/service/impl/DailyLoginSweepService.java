@@ -51,6 +51,9 @@ public class DailyLoginSweepService {
     @Resource
     DynamicInfo dynamicInfo;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     private LocalDate completedGameDay;
 
     public synchronized SweepResult runIfDue(LocalDateTime requestedNow) {
@@ -140,20 +143,21 @@ public class DailyLoginSweepService {
             priorityNames.add(displayName(account));
         }
 
-        var newlyQueuedCount = 0;
-        var reprioritizedCount = 0;
-        synchronized (dynamicInfo.getWaitUserList()) {
-            var waitingBefore = new HashSet<>(dynamicInfo.getWaitUserList());
-            for (Long accountId : priorityIds) {
-                if (waitingBefore.contains(accountId)) {
-                    reprioritizedCount++;
-                } else {
-                    newlyQueuedCount++;
-                }
+        var waitingBefore = new HashSet<Long>();
+        for (Long accountId : priorityIds) {
+            if (dispatchQueueService.contains(accountId)) {
+                waitingBefore.add(accountId);
             }
-            dynamicInfo.getWaitUserList().removeIf(priorityIds::contains);
-            dynamicInfo.getWaitUserList().addAll(0, priorityIds);
         }
+        var promotedIds = dispatchQueueService.promoteAutos(priorityIds, now);
+        priorityIds.clear();
+        priorityIds.addAll(promotedIds);
+        priorityNames.clear();
+        missingAccounts.stream()
+                .filter(account -> priorityIds.contains(account.getId()))
+                .forEach(account -> priorityNames.add(displayName(account)));
+        var reprioritizedCount = (int) priorityIds.stream().filter(waitingBefore::contains).count();
+        var newlyQueuedCount = priorityIds.size() - reprioritizedCount;
 
         var summary = buildSummary(gameDay, eligibleAccounts.size(), missingAccounts.size(), priorityIds.size(),
                 newlyQueuedCount, reprioritizedCount, runningCount, cooldownCount);

@@ -51,6 +51,9 @@ public class AccountRuntimeService {
     @Resource
     MessageServiceImpl messageService;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     public void enrichLogIdentity(LogEntity logEntity) {
         if (logEntity == null) {
             return;
@@ -296,11 +299,7 @@ public class AccountRuntimeService {
             }
             dynamicInfo.getFreezeUserInfoMap().put(runtime.getAccountId(), runtime.getNextEligibleAt());
             dynamicInfo.getCooldownReasonMap().put(runtime.getAccountId(), "retryBackoff");
-            synchronized (dynamicInfo.getWaitUserList()) {
-                if (!dynamicInfo.getWaitUserList().contains(runtime.getAccountId())) {
-                    dynamicInfo.getWaitUserList().add(runtime.getAccountId());
-                }
-            }
+            dispatchQueueService.restoreBest(runtime.getAccountId(), now);
             restored++;
         }
         return restored;

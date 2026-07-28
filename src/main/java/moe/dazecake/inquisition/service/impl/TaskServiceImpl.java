@@ -17,6 +17,7 @@ import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Infrastructure;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Offer;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Sanity;
 import moe.dazecake.inquisition.model.local.UserSan;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.service.intf.TaskService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
@@ -78,6 +79,9 @@ public class TaskServiceImpl implements TaskService {
     @Resource
     UrgentTaskService urgentTaskService;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     @Value("${spring.mail.enable:false}")
     boolean enableMail;
 
@@ -124,13 +128,8 @@ public class TaskServiceImpl implements TaskService {
                 urgentByAccount.putIfAbsent(task.getAccountId(), task);
             }
         });
-        if (urgentByAccount.isEmpty()) {
-            return urgentByAccount;
-        }
-        synchronized (dynamicInfo.getWaitUserList()) {
-            dynamicInfo.getWaitUserList().removeIf(urgentByAccount::containsKey);
-            dynamicInfo.getWaitUserList().addAll(0, new ArrayList<>(urgentByAccount.keySet()));
-        }
+        urgentByAccount.keySet().forEach(accountId ->
+                dispatchQueueService.enqueueUrgent(accountId, now));
         return urgentByAccount;
     }
 
@@ -163,11 +162,7 @@ public class TaskServiceImpl implements TaskService {
     }
 
     private void addWaitTaskIfAbsent(Long id) {
-        synchronized (dynamicInfo.getWaitUserList()) {
-            if (!dynamicInfo.getWaitUserList().contains(id)) {
-                dynamicInfo.getWaitUserList().add(id);
-            }
-        }
+        dispatchQueueService.restoreBest(id, GameDayClock.now());
     }
 
     private void putAccountOnCooldown(AccountEntity account, String deviceToken, String reason,
@@ -239,26 +234,34 @@ public class TaskServiceImpl implements TaskService {
         var urgentByAccount = promoteReadyUrgentTasks(now);
 
         //任务上锁
-        if (!dynamicInfo.getWaitUserList().isEmpty()) {
-            var account = new AccountEntity();
+        var waitingSnapshot = dispatchQueueService.snapshot();
+        if (!waitingSnapshot.isEmpty()) {
+            AccountEntity account = null;
             UrgentTaskEntity selectedUrgentTask = null;
+            DispatchIntent selectedIntent = null;
 
             //检查任务是否达到下发标准
-            var iterator = dynamicInfo.getWaitUserList().iterator();
             var hit = false;
-            while (iterator.hasNext()) {
-                account = accountMapper.selectById(iterator.next());
+            for (Long accountId : waitingSnapshot) {
+                account = accountMapper.selectById(accountId);
 
                 //删除检查
                 if (account == null) {
-                    iterator.remove();
+                    dispatchQueueService.remove(accountId);
                     continue;
                 }
-                if (isDeleted(account) || account.getExpireTime().isBefore(GameDayClock.now())) {
+                if (isDeleted(account) || account.getExpireTime() == null
+                        || account.getExpireTime().isBefore(now)) {
                     dynamicInfo.getUserSanInfoMap().remove(account.getId());
                     dynamicInfo.getFreezeUserInfoMap().remove(account.getId());
                     dynamicInfo.getCooldownReasonMap().remove(account.getId());
-                    iterator.remove();
+                    dispatchQueueService.remove(account.getId());
+                    continue;
+                }
+
+                var candidateIntent = dispatchQueueService.resolve(account.getId(), now);
+                if (candidateIntent == null) {
+                    dispatchQueueService.remove(account.getId());
                     continue;
                 }
 
@@ -273,8 +276,11 @@ public class TaskServiceImpl implements TaskService {
                 }
 
                 //时间检查，不在激活区间则跳转到下一个判断
-                var candidateUrgentTask = urgentByAccount.get(account.getId());
-                if (candidateUrgentTask == null && !checkActivationTime(account)) {
+                var candidateUrgentTask = DispatchIntent.SOURCE_URGENT_26.equals(candidateIntent.getSource())
+                        ? urgentByAccount.get(account.getId()) : null;
+                var ignoresActivationTime = DispatchIntent.SOURCE_URGENT_26.equals(candidateIntent.getSource())
+                        || DispatchIntent.SOURCE_SCHEDULED.equals(candidateIntent.getSource());
+                if (!ignoresActivationTime && !checkActivationTime(account)) {
                     continue;
                 }
 
@@ -295,13 +301,14 @@ public class TaskServiceImpl implements TaskService {
                 AccountEntity finalAccount = account;
                 if (dynamicInfo.getWorkUserList().stream()
                         .anyMatch(worker -> worker.equals(finalAccount.getId()))) {
-                    iterator.remove();
+                    dispatchQueueService.remove(account.getId());
                     continue;
                 }
 
                 //冻结判断，不处于冻结状态则返回任务
                 if (!checkFreeze(account)) {
                     selectedUrgentTask = candidateUrgentTask;
+                    selectedIntent = candidateIntent;
                     hit = true;
                     break;
                 }
@@ -323,7 +330,7 @@ public class TaskServiceImpl implements TaskService {
             messageService.push(account, "任务开始", "请勿强行顶号，强行顶号将导致轮空");
 
             //移出等待队列
-            iterator.remove();
+            dispatchQueueService.dequeue(selectedIntent);
 
             //理智归零
             dynamicInfo.setUserSanZero(account.getId());
@@ -362,8 +369,8 @@ public class TaskServiceImpl implements TaskService {
                         account, deviceToken, "LOGIN_NOT_CONFIRMED", failedAt);
                 dynamicInfo.getFreezeUserInfoMap().put(account.getId(), retryUntil);
                 dynamicInfo.getCooldownReasonMap().put(account.getId(), "retryBackoff");
-                addWaitTaskIfAbsent(account.getId());
                 urgentTaskService.markRetry(activeUrgency.get(), "LOGIN_NOT_CONFIRMED", retryUntil, failedAt);
+                addWaitTaskIfAbsent(account.getId());
                 return Result.success("登录成功日志未确认，已进入递增重试");
             }
             if (!taskAssignmentService.closeAssignment(assignment, "STALE_LOGIN_ONLY",
@@ -481,6 +488,7 @@ public class TaskServiceImpl implements TaskService {
             urgentTaskService.markRetry(activeUrgency.get(), type == null ? "unknown" : type,
                     effectiveRetryAt, failureAt);
         }
+        dispatchQueueService.restoreBest(account.getId(), failureAt);
 
         //推送消息
         messageService.push(account, "任务失败", "任务失败，请登陆面板查看失败原因");
@@ -491,18 +499,7 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public Result<String> tempInsertTask(Long id) {
         Result<String> result = new Result<>();
-
-        synchronized (dynamicInfo.getWaitUserList()) {
-            var iterator = dynamicInfo.getWaitUserList().iterator();
-            while (iterator.hasNext()) {
-                var account = iterator.next();
-                if (account.equals(id)) {
-                    iterator.remove();
-                    dynamicInfo.getWaitUserList().add(0, account);
-                    break;
-                }
-            }
-        }
+        dispatchQueueService.enqueueManual(id);
 
         return result.setCode(200)
                 .setMsg("插队成功")
@@ -513,13 +510,11 @@ public class TaskServiceImpl implements TaskService {
     public Result<String> tempRemoveTask(Long id) {
         Result<String> result = new Result<>();
 
-        for (Long waiter : dynamicInfo.getWaitUserList()) {
-            if (Objects.equals(waiter, id)) {
-                forceHaltTask(id);
-                return result.setCode(200)
-                        .setMsg("成功移出队列")
-                        .setData(null);
-            }
+        if (dispatchQueueService.contains(id)) {
+            forceHaltTask(id);
+            return result.setCode(200)
+                    .setMsg("成功移出队列")
+                    .setData(null);
         }
 
         return result.setCode(404)
@@ -529,16 +524,14 @@ public class TaskServiceImpl implements TaskService {
 
     @Override
     public Result<String> forceLoadAllTask() {
-        dynamicInfo.getWaitUserList().clear();
-        dynamicInfo.getWaitUserList().addAll(
-                accountMapper.selectList(
+        var accountIds = accountMapper.selectList(
                         Wrappers.<AccountEntity>lambdaQuery()
                                 .eq(AccountEntity::getDelete, 0)
                                 .eq(AccountEntity::getFreeze, 0)
                                 .eq(AccountEntity::getTaskType, "daily")
                                 .ge(AccountEntity::getExpireTime, GameDayClock.now())
-                ).stream().map(AccountEntity::getId).collect(Collectors.toList())
-        );
+                ).stream().map(AccountEntity::getId).collect(Collectors.toList());
+        dispatchQueueService.replaceAutos(accountIds, GameDayClock.now());
 
         //记录日志
         logService.logInfo("任务列表刷新", "管理员强制刷新了任务队列");
@@ -786,11 +779,7 @@ public class TaskServiceImpl implements TaskService {
             if (dynamicInfo.getWorkUserList().contains(id)) {
                 continue;
             }
-            synchronized (dynamicInfo.getWaitUserList()) {
-                if (!dynamicInfo.getWaitUserList().contains(id)) {
-                    dynamicInfo.getWaitUserList().add(id);
-                }
-            }
+            dispatchQueueService.restoreBest(id, now);
             restored++;
         }
         return restored;
@@ -988,16 +977,7 @@ public class TaskServiceImpl implements TaskService {
             }
             taskAssignmentService.closeAssignment(assignment, "REVOKED", "administrator halted task", false);
         }
-        synchronized (dynamicInfo.getWaitUserList()) {
-            var waitIterator = dynamicInfo.getWaitUserList().iterator();
-            while (waitIterator.hasNext()) {
-                var waiter = waitIterator.next();
-                if (waiter.equals(id)) {
-                    waitIterator.remove();
-                    break;
-                }
-            }
-        }
+        dispatchQueueService.remove(id);
         synchronized (dynamicInfo.getWorkUserList()) {
             var workIterator = dynamicInfo.getWorkUserList().iterator();
             while (workIterator.hasNext()) {
@@ -1063,18 +1043,11 @@ public class TaskServiceImpl implements TaskService {
 
             //检查是否到达阈值 阈值为最大值-40
             if (san >= maxSan - 40) {
-
-                //检查待分配队列中是否有重复任务
-                dynamicInfo.getWaitUserList().removeIf(waiter -> waiter.equals(account.getId()));
-
-                //加入待分配队列
-                dynamicInfo.getWaitUserList().add(account.getId());
-
-                messageService.push(account, "等待分配作战服务器", "您的理智已达到 " + san +
-                        "，等待分配作战服务器中，分配完成后将会自动开始作战");
-
-                //归零理智
-                dynamicInfo.setUserSanZero(id);
+                if (dispatchQueueService.enqueueAuto(account.getId())) {
+                    messageService.push(account, "等待分配作战服务器", "您的理智已达到 " + san +
+                            "，等待分配作战服务器中，分配完成后将会自动开始作战");
+                    dynamicInfo.setUserSanZero(id);
+                }
             }
 
             //检查是否到达提醒阈值 阈值为最大值-45

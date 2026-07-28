@@ -10,6 +10,7 @@ import moe.dazecake.inquisition.model.entity.UrgentTaskEntity;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.Fight;
 import moe.dazecake.inquisition.model.local.WorkUser;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.GameDayClock;
@@ -28,6 +29,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,6 +43,7 @@ class TaskServiceImplTest {
         service.logService = mock(LogServiceImpl.class);
         service.messageService = mock(MessageServiceImpl.class);
         service.accountMapper = mock(AccountMapper.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
 
         var account = new AccountEntity()
                 .setId(423L)
@@ -52,7 +56,7 @@ class TaskServiceImplTest {
 
         assertTrue(service.dynamicInfo.getFreezeUserInfoMap().containsKey(423L));
         assertEquals("lineBusy", service.dynamicInfo.getCooldownReasonMap().get(423L));
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(423L));
+        verify(service.dispatchQueueService).restoreBest(eq(423L), any(LocalDateTime.class));
         verify(service.logService).logWarn(contains("账号临时冷却"), contains("账号172B1"));
         verify(service.messageService, never()).pushAdmin(contains("账号临时冷却"), contains("lineBusy"));
     }
@@ -130,7 +134,7 @@ class TaskServiceImplTest {
         var result = service.completeTask("device-1", "assignment-normal", null);
 
         assertEquals(200, result.getCode());
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.dispatchQueueService).restoreBest(eq(398L), any(LocalDateTime.class));
         verify(service.urgentTaskService).markWaiting(eq(12L), any(LocalDateTime.class));
     }
 
@@ -197,7 +201,7 @@ class TaskServiceImplTest {
 
         assertEquals(200, result.getCode());
         assertEquals(retryUntil, service.dynamicInfo.getFreezeUserInfoMap().get(398L));
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.dispatchQueueService).restoreBest(eq(398L), any(LocalDateTime.class));
         verify(service.urgentTaskService).markRetry(eq(urgent), eq("LOGIN_NOT_CONFIRMED"),
                 eq(retryUntil), any(LocalDateTime.class));
         verify(service.sanityOcrService, never()).submit(any(), any(), any());
@@ -243,7 +247,8 @@ class TaskServiceImplTest {
         assertEquals(200, result.getCode());
         assertEquals(retryUntil, service.dynamicInfo.getFreezeUserInfoMap().get(398L));
         assertEquals("retryBackoff", service.dynamicInfo.getCooldownReasonMap().get(398L));
-        assertTrue(service.dynamicInfo.getWaitUserList().contains(398L));
+        verify(service.dispatchQueueService, org.mockito.Mockito.atLeastOnce())
+                .restoreBest(eq(398L), any(LocalDateTime.class));
         verify(service.accountRuntimeService).recordFailure(any(AccountEntity.class), eq("device-1"),
                 eq("network"), any(LocalDateTime.class));
         verify(service.urgentTaskService).markRetry(eq(urgent), eq("network"), eq(retryUntil),
@@ -297,6 +302,7 @@ class TaskServiceImplTest {
         service.deviceRuntimeService = mock(DeviceRuntimeService.class);
         service.taskAssignmentService = mock(TaskAssignmentService.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.deviceMapper.selectOne(any())).thenReturn(new DeviceEntity()
                 .setDeviceToken("device-1").setDelete(0));
         when(service.deviceRuntimeService.hasFreshHeartbeat(eq("device-1"), any(LocalDateTime.class)))
@@ -318,6 +324,7 @@ class TaskServiceImplTest {
         service.deviceRuntimeService = mock(DeviceRuntimeService.class);
         service.taskAssignmentService = mock(TaskAssignmentService.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.deviceMapper.selectOne(any())).thenReturn(new DeviceEntity()
                 .setDeviceToken("device-1").setDelete(0));
         when(service.deviceRuntimeService.hasFreshHeartbeat(eq("device-1"), any(LocalDateTime.class)))
@@ -336,6 +343,7 @@ class TaskServiceImplTest {
         var service = new TaskServiceImpl();
         service.dynamicInfo = new DynamicInfo();
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         service.dynamicInfo.setWaitUserList(new ArrayList<>(List.of(99L, 7L, 8L)));
         var now = LocalDateTime.of(2026, 7, 28, 2, 10);
         when(service.urgentTaskService.findDispatchable(any(), eq(now))).thenReturn(List.of(
@@ -346,7 +354,7 @@ class TaskServiceImplTest {
 
         var urgentByAccount = service.promoteReadyUrgentTasks(now);
 
-        assertEquals(List.of(7L, 99L, 8L), service.dynamicInfo.getWaitUserList());
+        verify(service.dispatchQueueService).enqueueUrgent(7L, now);
         assertEquals(11L, urgentByAccount.get(7L).getId());
     }
 
@@ -404,6 +412,7 @@ class TaskServiceImplTest {
         var service = new TaskServiceImpl();
         service.dynamicInfo = new DynamicInfo();
         service.taskAssignmentService = mock(TaskAssignmentService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.taskAssignmentService.findByAccount(398L)).thenReturn(Optional.empty());
         service.dynamicInfo.getWorkUserList().add(398L);
         var workUser = new WorkUser();
@@ -416,6 +425,78 @@ class TaskServiceImplTest {
 
         assertEquals(1, haltList.size());
         assertEquals("device-1", haltList.get(0));
+        verify(service.dispatchQueueService).remove(398L);
+    }
+
+    @Test
+    void forceLoadRebuildsOnlyTheAutoLayer() {
+        var service = new TaskServiceImpl();
+        service.dynamicInfo = new DynamicInfo();
+        service.accountMapper = mock(AccountMapper.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.logService = mock(LogServiceImpl.class);
+        when(service.accountMapper.selectList(any())).thenReturn(List.of(
+                new AccountEntity().setId(1L), new AccountEntity().setId(2L)));
+
+        assertEquals(200, service.forceLoadAllTask().getCode());
+
+        verify(service.dispatchQueueService).replaceAutos(eq(List.of(1L, 2L)),
+                any(LocalDateTime.class));
+    }
+
+    @Test
+    void generatedScheduledRunDoesNotRecheckTheCurrentActivationWeekday() {
+        var service = spy(new TaskServiceImpl());
+        service.dynamicInfo = new DynamicInfo();
+        service.deviceMapper = mock(DeviceMapper.class);
+        service.accountMapper = mock(AccountMapper.class);
+        service.deviceRuntimeService = mock(DeviceRuntimeService.class);
+        service.taskAssignmentService = mock(TaskAssignmentService.class);
+        service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.messageService = mock(MessageServiceImpl.class);
+        var account = new AccountEntity().setId(7L).setDelete(0).setFreeze(0)
+                .setServer(0L).setTaskType("daily")
+                .setExpireTime(LocalDateTime.of(2099, 1, 1, 0, 0));
+        var intent = DispatchIntent.scheduled(7L, 41L,
+                LocalDateTime.of(2026, 7, 28, 19, 30));
+        var assignment = new TaskAssignmentEntity().setAssignmentId("scheduled-assignment")
+                .setAccountId(7L).setTaskMode(TaskAssignmentService.MODE_NORMAL);
+        when(service.deviceMapper.selectOne(any())).thenReturn(new DeviceEntity()
+                .setDeviceToken("device-1").setDelete(0));
+        when(service.deviceRuntimeService.hasFreshHeartbeat(eq("device-1"), any())).thenReturn(true);
+        when(service.taskAssignmentService.findByDevice("device-1")).thenReturn(Optional.empty());
+        when(service.dispatchQueueService.snapshot()).thenReturn(List.of(7L));
+        when(service.dispatchQueueService.resolve(eq(7L), any())).thenReturn(intent);
+        when(service.accountMapper.selectById(7L)).thenReturn(account);
+        when(service.taskAssignmentService.createAssignment(eq(account), eq("device-1"), any()))
+                .thenReturn(assignment);
+        doReturn(false).when(service).checkActivationTime(account);
+
+        var result = service.getTask("device-1");
+
+        assertEquals(200, result.getCode());
+        assertEquals("scheduled-assignment", result.getData().getAssignmentId());
+        verify(service.dispatchQueueService).dequeue(intent);
+    }
+
+    @Test
+    void sanityThresholdDoesNotResetWhenScheduledModeRejectsAutoAdmission() {
+        var service = new TaskServiceImpl();
+        service.dynamicInfo = new DynamicInfo();
+        service.accountMapper = mock(AccountMapper.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        service.messageService = mock(MessageServiceImpl.class);
+        var account = new AccountEntity().setId(7L).setDelete(0).setFreeze(0)
+                .setExpireTime(LocalDateTime.of(2099, 1, 1, 0, 0));
+        service.dynamicInfo.setUserSan(7L, 94, 135);
+        when(service.accountMapper.selectById(7L)).thenReturn(account);
+        when(service.dispatchQueueService.enqueueAuto(7L)).thenReturn(false);
+
+        service.calculatingSan();
+
+        assertEquals(95, service.dynamicInfo.getUserSanInfoMap().get(7L).getSan());
+        verify(service.messageService, never()).push(eq(account), eq("等待分配作战服务器"), any());
     }
 
     private TaskServiceImpl taskCompletionService() {
@@ -428,6 +509,7 @@ class TaskServiceImplTest {
         service.accountRuntimeService = mock(AccountRuntimeService.class);
         service.sanityOcrService = mock(SanityOcrService.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.accountMapper.selectById(398L)).thenReturn(new AccountEntity()
                 .setId(398L)
                 .setName("账号774")

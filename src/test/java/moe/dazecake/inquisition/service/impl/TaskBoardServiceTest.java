@@ -90,7 +90,7 @@ class TaskBoardServiceTest {
 
         assertTrue(service.retryUrgentTask(11L, now));
 
-        assertEquals(List.of(7L, 99L), service.dynamicInfo.getWaitUserList());
+        verify(service.dispatchQueueService).enqueueUrgent(7L, now);
         assertTrue(!service.dynamicInfo.getFreezeUserInfoMap().containsKey(7L));
         verify(service.urgentTaskService).retryNow(11L, now);
     }
@@ -106,7 +106,7 @@ class TaskBoardServiceTest {
 
         assertTrue(service.cancelUrgentTask(11L, now));
 
-        assertEquals(List.of(7L), service.dynamicInfo.getWaitUserList());
+        verify(service.dispatchQueueService).restoreBest(7L, now);
     }
 
     private static TaskBoardService service() {
@@ -117,6 +117,7 @@ class TaskBoardServiceTest {
         service.urgentTaskService = mock(UrgentTaskService.class);
         service.taskService = mock(TaskServiceImpl.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
         return service;
     }
 

@@ -31,6 +31,9 @@ public class TaskRecoveryService {
     @Resource
     SklandCalibrationService sklandCalibrationService;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     public void recoverDeviceOffline(String deviceToken, LocalDateTime now) {
         var assignment = taskAssignmentService.findByDevice(deviceToken).orElse(null);
         if (assignment == null) {
@@ -68,12 +71,13 @@ public class TaskRecoveryService {
 
         var requeueAt = observedAfterAssignment
                 ? now.plusMinutes(STARTED_TASK_COOLDOWN_MINUTES) : now;
-        requeue(account, requeueAt, now, observedAfterAssignment
+        requeue(account, assignment, requeueAt, now, observedAfterAssignment
                 ? "设备离线，已校准游戏状态，10分钟后重新排队"
                 : "设备离线，任务已重新排队");
     }
 
-    private void requeue(AccountEntity account, LocalDateTime eligibleAt, LocalDateTime now, String message) {
+    private void requeue(AccountEntity account, TaskAssignmentEntity assignment,
+                         LocalDateTime eligibleAt, LocalDateTime now, String message) {
         if (eligibleAt.isAfter(now)) {
             dynamicInfo.getFreezeUserInfoMap().put(account.getId(), eligibleAt);
             dynamicInfo.getCooldownReasonMap().put(account.getId(), "deviceOffline");
@@ -81,11 +85,7 @@ public class TaskRecoveryService {
             dynamicInfo.getFreezeUserInfoMap().remove(account.getId());
             dynamicInfo.getCooldownReasonMap().remove(account.getId());
         }
-        synchronized (dynamicInfo.getWaitUserList()) {
-            if (!dynamicInfo.getWaitUserList().contains(account.getId())) {
-                dynamicInfo.getWaitUserList().add(account.getId());
-            }
-        }
+        dispatchQueueService.requeue(assignment);
         notifyUser(account, message);
     }
 

@@ -51,6 +51,9 @@ public class TaskBoardService {
     @Resource
     DynamicInfo dynamicInfo;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     public TaskBoardVO getBoard(LocalDateTime requestedNow) {
         var now = requestedNow == null ? GameDayClock.now() : requestedNow;
         var gameDay = GameDayClock.gameDay(now);
@@ -154,10 +157,7 @@ public class TaskBoardService {
         }
         dynamicInfo.getFreezeUserInfoMap().remove(task.getAccountId());
         dynamicInfo.getCooldownReasonMap().remove(task.getAccountId());
-        synchronized (dynamicInfo.getWaitUserList()) {
-            dynamicInfo.getWaitUserList().remove(task.getAccountId());
-            dynamicInfo.getWaitUserList().add(0, task.getAccountId());
-        }
+        dispatchQueueService.enqueueUrgent(task.getAccountId(), now);
         return true;
     }
 
@@ -177,11 +177,7 @@ public class TaskBoardService {
             taskAssignmentService.closeAssignment(assignment, "CANCELLED",
                     "administrator cancelled twenty-six urgency", true);
         }
-        synchronized (dynamicInfo.getWaitUserList()) {
-            if (!dynamicInfo.getWaitUserList().contains(task.getAccountId())) {
-                dynamicInfo.getWaitUserList().add(task.getAccountId());
-            }
-        }
+        dispatchQueueService.restoreBest(task.getAccountId(), now);
         return true;
     }
 

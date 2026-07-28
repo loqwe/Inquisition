@@ -60,7 +60,7 @@ class DailyLoginSweepServiceTest {
         assertEquals(2, result.getPrioritizedCount());
         assertEquals(1, result.getRunningCount());
         assertEquals(1, result.getCooldownCount());
-        assertEquals(List.of(1L, 3L, 99L, 5L), service.dynamicInfo.getWaitUserList());
+        verify(service.dispatchQueueService).promoteAutos(List.of(1L, 3L), now);
         verify(service.accountMapper, never()).updateById(any());
         verify(service.messageService).pushAdmin(contains("14点补登"), contains("账号1"));
         verify(service.logService).logInfo(eq(DailyLoginSweepService.JOB_LOG_TITLE), contains("优先入队: 2"));
@@ -68,7 +68,6 @@ class DailyLoginSweepServiceTest {
         var secondRun = service.runIfDue(now.plusMinutes(5));
 
         assertFalse(secondRun.isExecuted());
-        assertEquals(List.of(1L, 3L, 99L, 5L), service.dynamicInfo.getWaitUserList());
         verify(service.messageService, times(1)).pushAdmin(any(), any());
     }
 
@@ -125,6 +124,10 @@ class DailyLoginSweepServiceTest {
         service.messageService = mock(MessageServiceImpl.class);
         service.logService = mock(LogServiceImpl.class);
         service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        when(service.dispatchQueueService.contains(3L)).thenReturn(true);
+        when(service.dispatchQueueService.promoteAutos(any(), any()))
+                .thenReturn(List.of(1L, 3L));
         when(service.taskAssignmentService.findAll()).thenReturn(List.of());
         return service;
     }

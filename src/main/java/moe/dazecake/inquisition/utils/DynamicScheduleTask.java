@@ -18,6 +18,8 @@ import moe.dazecake.inquisition.service.impl.DailyLoginSweepService;
 import moe.dazecake.inquisition.service.impl.FinalLoginSweepService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
 import moe.dazecake.inquisition.service.impl.AccountScheduledDispatchService;
+import moe.dazecake.inquisition.service.impl.DispatchQueueService;
+import moe.dazecake.inquisition.service.impl.PartialScheduledDispatchException;
 import moe.dazecake.inquisition.service.impl.LogServiceImpl;
 import moe.dazecake.inquisition.service.impl.MessageServiceImpl;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
@@ -100,6 +102,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
     AccountScheduledDispatchService accountScheduledDispatchService;
 
     @Resource
+    DispatchQueueService dispatchQueueService;
+
+    @Resource
     ChinacServiceImpl chinacService;
 
     @Resource
@@ -145,8 +150,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                         "0 */1 * * * *", "每1分钟", 1, 2, () -> true),
                 () -> {
                     var restored = taskService.restoreExpiredCooldownTasks();
-                    LinkedHashSet<Long> set = new LinkedHashSet<>(dynamicInfo.getWaitUserList());
-                    dynamicInfo.setWaitUserList(new ArrayList<>(set));
+                    dispatchQueueService.deduplicate();
                     if (restored > 0) {
                         log.info("【审判庭】已恢复冷却到期账号数: " + restored);
                     }
@@ -344,7 +348,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                 definition(16, ACCOUNT_SCHEDULED_DISPATCH_TASK, "账号定时调度",
                         "扫描到期账号定时配置并恢复持久化运行实例",
                         "0 */1 * * * *", "每1分钟", 2, 2, () -> enableAccountSchedule),
-                () -> accountScheduledDispatchService.scan(GameDayClock.now()));
+                () -> runAccountScheduledDispatch(GameDayClock.now()));
     }
 
     private ScheduledTaskDefinition definition(int order, String key, String name, String description,
@@ -414,6 +418,16 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
             finalLoginSweepService.runIfDue(now);
         } catch (RuntimeException exception) {
             log.warn("【审判庭】26点最终补登扫描失败", exception);
+            throw exception;
+        }
+    }
+
+    void runAccountScheduledDispatch(LocalDateTime now) {
+        try {
+            dispatchQueueService.enqueueScheduledRuns(
+                    accountScheduledDispatchService.scan(now), now);
+        } catch (PartialScheduledDispatchException exception) {
+            dispatchQueueService.enqueueScheduledRuns(exception.getDispatchableRuns(), now);
             throw exception;
         }
     }

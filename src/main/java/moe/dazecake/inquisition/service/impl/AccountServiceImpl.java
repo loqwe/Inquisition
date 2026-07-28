@@ -46,6 +46,9 @@ public class AccountServiceImpl implements AccountService {
     @Resource
     TaskServiceImpl taskService;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     @Override
     public void addAccount(AddAccountDTO addAccountDTO) {
         var accountEntity = new AccountEntity();
@@ -268,18 +271,9 @@ public class AccountServiceImpl implements AccountService {
             account.setFreeze(0);
         }
         //插队检查
-        for (Long userId : dynamicInfo.getWaitUserList()) {
-            if (Objects.equals(userId, id)) {
-                var freeListIterator = dynamicInfo.getWaitUserList().iterator();
-                while (freeListIterator.hasNext()) {
-                    var insertTask = freeListIterator.next();
-                    if (insertTask.equals(id)) {
-                        freeListIterator.remove();
-                        dynamicInfo.getWaitUserList().add(0, insertTask);
-                        return "插队成功";
-                    }
-                }
-            }
+        if (dispatchQueueService.contains(id)) {
+            dispatchQueueService.enqueueManual(id);
+            return "插队成功";
         }
         //上锁检查
         for (Long worker : dynamicInfo.getWorkUserList()) {
@@ -294,7 +288,9 @@ public class AccountServiceImpl implements AccountService {
             }
         }
         //执行
-        dynamicInfo.getWaitUserList().add(0, account.getId());
+        if (!dispatchQueueService.enqueueManual(account.getId())) {
+            return "账号当前无法加入任务队列";
+        }
         dynamicInfo.setUserSanZero(account.getId());
         account = accountMapper.selectById(id);
         account.setRefresh(account.getRefresh() - 1);

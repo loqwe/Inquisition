@@ -324,4 +324,20 @@ class AccountRuntimeServiceTest {
         verify(service.runtimeMapper, never()).insert(any());
         verify(service.runtimeMapper, never()).updateById(any());
     }
+
+    @Test
+    void startupCooldownRestorationUsesTheResolvedDispatchSource() {
+        var service = new AccountRuntimeService();
+        service.runtimeMapper = mock(AccountRuntimeMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.dispatchQueueService = mock(DispatchQueueService.class);
+        var now = LocalDateTime.of(2026, 7, 28, 20, 0);
+        var retryAt = now.plusMinutes(20);
+        when(service.runtimeMapper.selectList(any())).thenReturn(List.of(
+                new AccountRuntimeEntity().setAccountId(398L).setNextEligibleAt(retryAt)));
+
+        assertEquals(1, service.restoreRetryCooldowns(now));
+
+        verify(service.dispatchQueueService).restoreBest(398L, now);
+    }
 }

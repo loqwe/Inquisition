@@ -16,6 +16,8 @@ import moe.dazecake.inquisition.service.impl.FinalLoginSweepService;
 import moe.dazecake.inquisition.service.impl.DeviceRuntimeService;
 import moe.dazecake.inquisition.service.impl.AccountRuntimeService;
 import moe.dazecake.inquisition.service.impl.AccountScheduledDispatchService;
+import moe.dazecake.inquisition.service.impl.DispatchQueueService;
+import moe.dazecake.inquisition.service.impl.PartialScheduledDispatchException;
 import moe.dazecake.inquisition.service.impl.ScheduledTaskMonitorService;
 import moe.dazecake.inquisition.service.impl.TaskAssignmentService;
 import moe.dazecake.inquisition.service.impl.UrgentTaskService;
@@ -76,6 +78,9 @@ public class RunScript implements ApplicationRunner {
 
     @Resource
     AccountScheduledDispatchService accountScheduledDispatchService;
+
+    @Resource
+    DispatchQueueService dispatchQueueService;
 
     @Value("${inquisition.secret:}")
     String secret;
@@ -153,7 +158,7 @@ public class RunScript implements ApplicationRunner {
             );
             for (AccountEntity account : dailyAccounts) {
                 dynamicInfo.setUserSanZero(account.getId());
-                dynamicInfo.getWaitUserList().add(account.getId());
+                dispatchQueueService.enqueueAuto(account.getId());
             }
 
         }
@@ -169,6 +174,7 @@ public class RunScript implements ApplicationRunner {
         var restoredAssignments = taskAssignmentService.restoreActiveAssignments(now);
         var restoredCooldowns = accountRuntimeService.restoreRetryCooldowns(now);
         var restoredUrgentTasks = restoreUrgentLoginTasks(now);
+        dispatchQueueService.reconcileRestoredQueue(now, enableAccountSchedule);
         if (expiredAssignments > 0 || restoredAssignments > 0) {
             log.info("【审判庭初始化】恢复任务租约: active={}, expired={}", restoredAssignments, expiredAssignments);
         }
@@ -223,12 +229,24 @@ public class RunScript implements ApplicationRunner {
             return;
         }
         var restored = accountScheduledDispatchService.restoreDispatchable(now);
+        dispatchQueueService.enqueueScheduledRuns(restored, now);
         var scanned = new int[1];
         scheduledTaskMonitor.execute(DynamicScheduleTask.ACCOUNT_SCHEDULED_DISPATCH_TASK,
-                "STARTUP_RECOVERY", () -> scanned[0] = accountScheduledDispatchService.scan(now).size());
+                "STARTUP_RECOVERY", () -> scanned[0] = scanAndEnqueueScheduled(now));
         if (!restored.isEmpty() || scanned[0] > 0) {
             log.info("【审判庭初始化】定时运行恢复: restored={}, dispatchable={}",
                     restored.size(), scanned[0]);
+        }
+    }
+
+    private int scanAndEnqueueScheduled(LocalDateTime now) {
+        try {
+            var runs = accountScheduledDispatchService.scan(now);
+            dispatchQueueService.enqueueScheduledRuns(runs, now);
+            return runs.size();
+        } catch (PartialScheduledDispatchException exception) {
+            dispatchQueueService.enqueueScheduledRuns(exception.getDispatchableRuns(), now);
+            throw exception;
         }
     }
 
@@ -254,11 +272,7 @@ public class RunScript implements ApplicationRunner {
                 dynamicInfo.getFreezeUserInfoMap().put(task.getAccountId(), task.getNextRetryAt());
                 dynamicInfo.getCooldownReasonMap().put(task.getAccountId(), "retryBackoff");
             }
-            synchronized (dynamicInfo.getWaitUserList()) {
-                if (!dynamicInfo.getWaitUserList().contains(task.getAccountId())) {
-                    dynamicInfo.getWaitUserList().add(task.getAccountId());
-                }
-            }
+            dispatchQueueService.restoreBest(task.getAccountId(), now);
             restored++;
         }
         return restored;

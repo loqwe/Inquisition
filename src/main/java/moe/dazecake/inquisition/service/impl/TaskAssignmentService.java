@@ -36,6 +36,9 @@ public class TaskAssignmentService {
     @Resource
     UrgentTaskService urgentTaskService;
 
+    @Resource
+    DispatchQueueService dispatchQueueService;
+
     @Transactional
     public TaskAssignmentEntity createAssignment(AccountEntity account, String deviceToken, LocalDateTime now) {
         return createAssignment(account, deviceToken, now, MODE_NORMAL, null);
@@ -215,11 +218,6 @@ public class TaskAssignmentService {
         }
         dynamicInfo.removeWorkUser(assignment.getAccountId());
         if (requeue) {
-            synchronized (dynamicInfo.getWaitUserList()) {
-                if (!dynamicInfo.getWaitUserList().contains(assignment.getAccountId())) {
-                    dynamicInfo.getWaitUserList().add(assignment.getAccountId());
-                }
-            }
             if (assignment.getUrgentTaskId() != null) {
                 urgentTaskService.markWaiting(assignment.getUrgentTaskId(), closedAt);
             } else {
@@ -228,6 +226,7 @@ public class TaskAssignmentService {
                         .filter(task -> UrgentTaskService.STATUS_RUNNING.equals(task.getStatus()))
                         .ifPresent(task -> urgentTaskService.markWaiting(task.getId(), closedAt));
             }
+            dispatchQueueService.requeue(assignment);
         }
         return true;
     }
