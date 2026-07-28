@@ -1,5 +1,6 @@
 package moe.dazecake.inquisition.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import moe.dazecake.inquisition.mapper.DashboardMetricsMapper;
 import moe.dazecake.inquisition.model.entity.DeviceEntity;
 import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
@@ -19,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -27,7 +29,7 @@ import static org.mockito.Mockito.when;
 class AdminDashboardOverviewServiceTest {
 
     @Test
-    void overviewUsesOneShanghaiSnapshotAndReturnsOnlySanitizedOperationalData() {
+    void overviewUsesOneShanghaiSnapshotAndReturnsOnlySanitizedOperationalData() throws Exception {
         var service = new AdminDashboardOverviewService();
         service.dashboardMetricsMapper = mock(DashboardMetricsMapper.class);
         service.accountService = mock(AccountServiceImpl.class);
@@ -82,6 +84,11 @@ class AdminDashboardOverviewServiceTest {
                 .allMatch(item -> item.getTokenSuffix().length() <= 4));
         assertTrue(overview.getTasks().getRunningItems().stream()
                 .noneMatch(item -> "full-device-token".equals(item.getDeviceName())));
+        var json = new ObjectMapper().findAndRegisterModules().writeValueAsString(overview);
+        assertFalse(json.contains("deviceToken"));
+        assertFalse(json.contains("password"));
+        assertFalse(json.contains("pushPlusToken"));
+        assertFalse(json.contains("full-device-token"));
     }
 
     @Test
