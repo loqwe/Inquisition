@@ -65,8 +65,10 @@ public class AccountController {
     @Login
     @Operation(summary = "分页查询账号")
     @GetMapping("/showAccount")
-    public Result<PageQueryVO<AccountWithSanVO>> showAccount(Long current, Long size, String taskType, String freeze, String expired, String deleted) {
-        return Result.success(accountService.queryAllAccount(current, size, taskType, freeze, expired, deleted), "查询成功");
+    public Result<PageQueryVO<AccountWithSanVO>> showAccount(Long current, Long size, String taskType, String freeze,
+                                                             String expired, String deleted, String login) {
+        return Result.success(accountService.queryAllAccount(current, size, taskType, freeze, expired, deleted, login),
+                "查询成功");
     }
 
     @Login

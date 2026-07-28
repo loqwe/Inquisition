@@ -368,7 +368,21 @@ public class AccountServiceImpl implements AccountService {
     }
 
     @Override
-    public PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size, String taskType, String freeze, String expired, String deleted) {
+    public PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size, String taskType, String freeze,
+                                                         String expired, String deleted, String login) {
+        return queryAllAccount(current, size, taskType, freeze, expired, deleted, login, GameDayClock.now());
+    }
+
+    public PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size, String taskType, String freeze,
+                                                         String expired, String deleted, String login,
+                                                         LocalDateTime requestedNow) {
+        var now = requestedNow == null ? GameDayClock.now() : requestedNow;
+        if ("missing".equalsIgnoreCase(login)) {
+            var data = accountMapper.selectMissingDailyLoginPage(new Page<>(current, size), now,
+                    GameDayClock.startOfGameDay(now));
+            return getAccountWithSanVOPageQueryVO(data);
+        }
+
         var wrapper = Wrappers.<AccountEntity>lambdaQuery();
         var deletedFilter = parseBooleanFilter(deleted);
 
@@ -385,8 +399,8 @@ public class AccountServiceImpl implements AccountService {
 
         var expiredFilter = parseBooleanFilter(expired);
         if (expiredFilter != null) {
-            wrapper.lt(expiredFilter, AccountEntity::getExpireTime, LocalDateTime.now())
-                    .ge(!expiredFilter, AccountEntity::getExpireTime, LocalDateTime.now());
+            wrapper.lt(expiredFilter, AccountEntity::getExpireTime, now)
+                    .ge(!expiredFilter, AccountEntity::getExpireTime, now);
         }
 
         var data = accountMapper.selectPage(new Page<>(current, size), wrapper);
@@ -397,7 +411,7 @@ public class AccountServiceImpl implements AccountService {
     public PageQueryVO<AccountWithSanVO> queryAccount(Long current, Long size, String keyword) {
         var normalizedKeyword = keyword == null ? "" : keyword.trim();
         if (normalizedKeyword.isBlank()) {
-            return queryAllAccount(current, size, null, null, null, null);
+            return queryAllAccount(current, size, null, null, null, null, null);
         }
 
         var data = accountMapper.searchActiveExactFirst(new Page<>(current, size), normalizedKeyword, parseIdKeyword(normalizedKeyword));
