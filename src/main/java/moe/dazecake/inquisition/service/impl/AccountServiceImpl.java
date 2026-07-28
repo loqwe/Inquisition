@@ -4,12 +4,19 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.google.gson.Gson;
 import moe.dazecake.inquisition.constant.enums.TaskType;
+import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
 import moe.dazecake.inquisition.mapper.AccountMapper;
+import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
 import moe.dazecake.inquisition.mapper.mapstruct.AccountConvert;
+import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.account.AddAccountDTO;
+import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
+import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
+import moe.dazecake.inquisition.model.local.DispatchIntent;
 import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.AccountService;
@@ -18,13 +25,17 @@ import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.GameDayClock;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class AccountServiceImpl implements AccountService {
@@ -48,6 +59,21 @@ public class AccountServiceImpl implements AccountService {
 
     @Resource
     DispatchQueueService dispatchQueueService;
+
+    @Resource
+    AccountDispatchConfigService dispatchConfigService;
+
+    @Resource
+    TaskAssignmentService taskAssignmentService;
+
+    @Resource
+    AccountScheduledRunService scheduledRunService;
+
+    @Resource
+    AccountDispatchConfigMapper dispatchConfigMapper;
+
+    @Resource
+    AccountScheduledRunMapper scheduledRunMapper;
 
     @Override
     public void addAccount(AddAccountDTO addAccountDTO) {
@@ -116,25 +142,168 @@ public class AccountServiceImpl implements AccountService {
     }
 
     @Override
+    @Transactional
     public void deleteAccount(Long id) {
         if (id != null) {
             taskService.forceHaltTask(id);
+            var activeRun = scheduledRunService.findActiveByAccount(id).orElse(null);
+            if (activeRun != null && !scheduledRunService.cancel(activeRun.getId())) {
+                throw new IllegalStateException("Unable to cancel scheduled run before account deletion");
+            }
+            dispatchQueueService.remove(id);
             dynamicInfo.getUserSanInfoMap().remove(id);
+            dynamicInfo.getFreezeUserInfoMap().remove(id);
+            dynamicInfo.getCooldownReasonMap().remove(id);
+            dispatchConfigMapper.deleteById(id);
             accountMapper.hardDeleteById(id);
         }
     }
 
     @Override
+    @Transactional
     public void updateAccount(AccountDTO accountDTO, Set<String> presentFields) {
+        updateAccount(accountDTO, presentFields, null);
+    }
+
+    @Override
+    @Transactional
+    public void updateAccount(AccountDTO accountDTO, Set<String> presentFields,
+                              AccountDispatchConfigDTO dispatchConfig) {
         var account = accountMapper.selectById(accountDTO.getId());
 
         if (account != null) {
+            var now = GameDayClock.now();
+            var wasSchedulable = isSchedulableDailyAccount(account, now);
             mergeAccountUpdates(account, accountDTO, presentFields);
             if (presentFields != null && presentFields.contains("config")) {
                 DailyPlanUtil.normalizeDailyPlan(account);
             }
-            account.setUpdateTime(LocalDateTime.now());
+            account.setUpdateTime(now);
             accountMapper.updateById(account);
+            updateDispatchConfiguration(account, presentFields, dispatchConfig, now);
+            reconcileAccountEligibility(account, presentFields, wasSchedulable, now);
+        }
+    }
+
+    private void updateDispatchConfiguration(AccountEntity account, Set<String> presentFields,
+                                             AccountDispatchConfigDTO requestedConfig,
+                                             LocalDateTime now) {
+        if (presentFields == null) {
+            return;
+        }
+        var configWasProvided = presentFields.contains("dispatchConfig");
+        var activeWeekChanged = presentFields.contains("active");
+        if (!configWasProvided && !activeWeekChanged) {
+            return;
+        }
+        var existingConfig = dispatchConfigService.getOrDefault(account.getId());
+        if (!configWasProvided
+                && !AccountDispatchConfigService.SCHEDULED.equals(existingConfig.getDispatchMode())) {
+            return;
+        }
+
+        var effectiveRequest = requestedConfig;
+        if (!configWasProvided) {
+            effectiveRequest = new AccountDispatchConfigDTO();
+            effectiveRequest.setDispatchMode(existingConfig.getDispatchMode());
+            effectiveRequest.setScheduleTime(existingConfig.getScheduleTime());
+        }
+        if (effectiveRequest == null) {
+            throw new IllegalArgumentException("dispatch configuration is required");
+        }
+
+        var assignment = taskAssignmentService.findByAccount(account.getId()).orElse(null);
+        var activeRun = scheduledRunService.findActiveByAccount(account.getId()).orElse(null);
+        var targetScheduled = AccountDispatchConfigService.SCHEDULED.equals(
+                effectiveRequest.getDispatchMode());
+        var deferActivation = shouldDeferActivation(targetScheduled, assignment, activeRun);
+        dispatchConfigService.update(account, effectiveRequest, deferActivation, now);
+        reconcileDispatchState(account.getId(), existingConfig, effectiveRequest,
+                assignment, activeRun);
+    }
+
+    private void reconcileAccountEligibility(AccountEntity account, Set<String> presentFields,
+                                             boolean wasSchedulable, LocalDateTime now) {
+        var isSchedulable = isSchedulableDailyAccount(account, now);
+        if (wasSchedulable == isSchedulable) {
+            return;
+        }
+        if (!isSchedulable) {
+            dispatchConfigMapper.clearNext(account.getId());
+            var activeRun = scheduledRunService.findActiveByAccount(account.getId()).orElse(null);
+            if (activeRun != null
+                    && !AccountScheduledRunService.STATUS_RUNNING.equals(activeRun.getStatus())
+                    && !scheduledRunService.cancel(activeRun.getId())) {
+                throw new IllegalStateException("Unable to cancel scheduled run for inactive account");
+            }
+            dispatchQueueService.remove(account.getId());
+            return;
+        }
+
+        var scheduleAlreadyRecalculated = presentFields != null
+                && (presentFields.contains("dispatchConfig") || presentFields.contains("active"));
+        if (scheduleAlreadyRecalculated) {
+            return;
+        }
+        var config = dispatchConfigService.getOrDefault(account.getId());
+        if (!AccountDispatchConfigService.SCHEDULED.equals(config.getDispatchMode())
+                || taskAssignmentService.findByAccount(account.getId()).isPresent()
+                || scheduledRunService.findActiveByAccount(account.getId()).isPresent()) {
+            return;
+        }
+        var request = new AccountDispatchConfigDTO();
+        request.setDispatchMode(config.getDispatchMode());
+        request.setScheduleTime(config.getScheduleTime());
+        dispatchConfigService.update(account, request, false, now);
+    }
+
+    private boolean isSchedulableDailyAccount(AccountEntity account, LocalDateTime now) {
+        return account != null
+                && "daily".equals(account.getTaskType())
+                && Integer.valueOf(0).equals(account.getDelete())
+                && Integer.valueOf(0).equals(account.getFreeze())
+                && account.getExpireTime() != null
+                && account.getExpireTime().isAfter(now);
+    }
+
+    private boolean shouldDeferActivation(boolean targetScheduled,
+                                          TaskAssignmentEntity assignment,
+                                          AccountScheduledRunEntity activeRun) {
+        if (targetScheduled) {
+            return assignment != null || activeRun != null;
+        }
+        return (assignment != null
+                && DispatchIntent.SOURCE_SCHEDULED.equals(assignment.getDispatchSource()))
+                || (activeRun != null
+                && AccountScheduledRunService.STATUS_RUNNING.equals(activeRun.getStatus()));
+    }
+
+    private void reconcileDispatchState(Long accountId, AccountDispatchConfigEntity existingConfig,
+                                        AccountDispatchConfigDTO requestedConfig,
+                                        TaskAssignmentEntity assignment,
+                                        AccountScheduledRunEntity activeRun) {
+        var targetScheduled = AccountDispatchConfigService.SCHEDULED.equals(
+                requestedConfig.getDispatchMode());
+        if (targetScheduled) {
+            if (activeRun == null) {
+                dispatchQueueService.remove(accountId);
+            }
+            return;
+        }
+        if (!AccountDispatchConfigService.SCHEDULED.equals(existingConfig.getDispatchMode())) {
+            return;
+        }
+        if (activeRun != null
+                && !AccountScheduledRunService.STATUS_RUNNING.equals(activeRun.getStatus())) {
+            if (!scheduledRunService.cancel(activeRun.getId())) {
+                throw new IllegalStateException("Unable to cancel scheduled run after mode change");
+            }
+            dispatchQueueService.remove(accountId);
+            return;
+        }
+        if (activeRun == null && (assignment == null
+                || !DispatchIntent.SOURCE_SCHEDULED.equals(assignment.getDispatchSource()))) {
+            dispatchQueueService.remove(accountId);
         }
     }
 
@@ -375,6 +544,13 @@ public class AccountServiceImpl implements AccountService {
             }
         });
         var todayLoginCounts = dailyLoginService.getLoginCounts(accountIds, GameDayClock.now());
+        var dispatchConfigs = dispatchConfigs(accountIds);
+        var scheduledAccountIds = dispatchConfigs.values().stream()
+                .filter(config -> AccountDispatchConfigService.SCHEDULED.equals(
+                        config.getDispatchMode()))
+                .map(AccountDispatchConfigEntity::getAccountId)
+                .collect(Collectors.toSet());
+        var latestRuns = latestScheduledRuns(scheduledAccountIds);
 
         for (AccountEntity user : data.getRecords()) {
             hydrateConfigFromRawJson(user);
@@ -388,9 +564,62 @@ public class AccountServiceImpl implements AccountService {
                 accountWithSanVO = AccountConvert.INSTANCE.toAccountWithSanVO(user, "");
             }
             accountWithSanVO.setTodayLoginCount(todayLoginCounts.getOrDefault(user.getId(), 0));
+            hydrateDispatch(accountWithSanVO, dispatchConfigs.get(user.getId()),
+                    latestRuns.get(user.getId()));
             result.getRecords().add(accountWithSanVO);
         }
         return result;
+    }
+
+    private Map<Long, AccountDispatchConfigEntity> dispatchConfigs(Set<Long> accountIds) {
+        if (accountIds.isEmpty()) {
+            return Map.of();
+        }
+        var rows = dispatchConfigMapper.selectBatchIds(accountIds);
+        if (rows == null) {
+            return Map.of();
+        }
+        return rows.stream().filter(Objects::nonNull)
+                .collect(Collectors.toMap(AccountDispatchConfigEntity::getAccountId,
+                        Function.identity(), (left, right) -> left));
+    }
+
+    private Map<Long, AccountScheduledRunEntity> latestScheduledRuns(Set<Long> accountIds) {
+        if (accountIds.isEmpty()) {
+            return Map.of();
+        }
+        var rows = scheduledRunMapper.selectLatestByAccountIds(accountIds);
+        if (rows == null) {
+            return Map.of();
+        }
+        return rows.stream().filter(Objects::nonNull)
+                .collect(Collectors.toMap(AccountScheduledRunEntity::getAccountId,
+                        Function.identity(), (left, right) -> left));
+    }
+
+    private void hydrateDispatch(AccountWithSanVO target, AccountDispatchConfigEntity config,
+                                 AccountScheduledRunEntity latestRun) {
+        if (config == null) {
+            target.setDispatchMode(AccountDispatchConfigService.AUTO);
+            return;
+        }
+        target.setDispatchMode(config.getDispatchMode());
+        target.setScheduleTime(config.getScheduleTime());
+        target.setNextScheduledAt(config.getNextScheduledAt());
+        if (!AccountDispatchConfigService.SCHEDULED.equals(config.getDispatchMode())) {
+            return;
+        }
+        if (latestRun == null) {
+            target.setScheduleStatus("NOT_RUN");
+            return;
+        }
+        if (AccountScheduledRunService.STATUS_SUCCEEDED.equals(latestRun.getStatus())) {
+            target.setScheduleStatus("NORMAL");
+        } else if (AccountScheduledRunService.STATUS_CANCELLED.equals(latestRun.getStatus())) {
+            target.setScheduleStatus("NOT_RUN");
+        } else {
+            target.setScheduleStatus(latestRun.getStatus());
+        }
     }
 
     private void hydrateConfigFromRawJson(AccountEntity user) {

@@ -100,6 +100,42 @@ class AccountScheduledRunLifecycleServiceTest {
                 org.mockito.ArgumentMatchers.any());
     }
 
+    @Test
+    void closingAutoAssignmentActivatesPendingScheduleWhenNoRunExists() {
+        var service = service();
+        var closedAt = LocalDateTime.of(2026, 7, 28, 20, 0);
+        var account = account();
+        var assignment = new TaskAssignmentEntity().setAccountId(7L)
+                .setDispatchSource(DispatchIntent.SOURCE_AUTO);
+        when(service.configMapper.selectByIdForUpdate(7L)).thenReturn(
+                scheduledConfig().setActivationPending(1).setNextScheduledAt(null));
+        when(service.runService.findActiveByAccount(7L)).thenReturn(java.util.Optional.empty());
+        when(service.accountMapper.selectById(7L)).thenReturn(account);
+
+        assertTrue(service.activatePendingIfReady(assignment, closedAt));
+
+        verify(service.configService).activatePending(account, closedAt);
+    }
+
+    @Test
+    void urgentAssignmentDoesNotActivatePendingChangeAheadOfUnderlyingScheduledRun() {
+        var service = service();
+        var closedAt = LocalDateTime.of(2026, 7, 28, 20, 0);
+        var assignment = new TaskAssignmentEntity().setAccountId(7L)
+                .setDispatchSource(DispatchIntent.SOURCE_URGENT_26);
+        when(service.configMapper.selectByIdForUpdate(7L)).thenReturn(
+                scheduledConfig().setActivationPending(1).setNextScheduledAt(null));
+        when(service.runService.findActiveByAccount(7L)).thenReturn(java.util.Optional.of(
+                new moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity()
+                        .setId(41L).setAccountId(7L)
+                        .setStatus(AccountScheduledRunService.STATUS_WAITING)));
+
+        assertFalse(service.activatePendingIfReady(assignment, closedAt));
+
+        verify(service.configService, never()).activatePending(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
     private static AccountScheduledRunLifecycleService service() {
         var service = new AccountScheduledRunLifecycleService();
         service.runService = mock(AccountScheduledRunService.class);

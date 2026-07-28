@@ -96,6 +96,24 @@ public class AccountScheduledRunLifecycleService {
         }
     }
 
+    @Transactional
+    public boolean activatePendingIfReady(TaskAssignmentEntity assignment,
+                                          LocalDateTime closedAt) {
+        if (assignment == null || assignment.getAccountId() == null) {
+            return false;
+        }
+        Objects.requireNonNull(closedAt, "closedAt");
+        var config = configMapper.selectByIdForUpdate(assignment.getAccountId());
+        if (config == null || !Integer.valueOf(1).equals(config.getActivationPending())) {
+            return false;
+        }
+        if (runService.findActiveByAccount(assignment.getAccountId()).isPresent()) {
+            return false;
+        }
+        activatePending(assignment.getAccountId(), closedAt);
+        return true;
+    }
+
     private boolean isScheduled(TaskAssignmentEntity assignment) {
         return assignment != null
                 && DispatchIntent.SOURCE_SCHEDULED.equals(assignment.getDispatchSource())

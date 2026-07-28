@@ -57,6 +57,27 @@ class TaskAssignmentServiceTest {
     }
 
     @Test
+    void closingAutoAssignmentActivatesPendingScheduleAndSuppressesOldSourceRequeue() {
+        var service = assignmentService();
+        var assignment = new TaskAssignmentEntity().setAssignmentId("auto-assignment")
+                .setAccountId(7L).setDeviceToken("device-1").setTaskType("daily")
+                .setTaskMode(TaskAssignmentService.MODE_NORMAL)
+                .setDispatchSource(DispatchIntent.SOURCE_AUTO)
+                .setAssignedAt(LocalDateTime.of(2026, 7, 28, 19, 30));
+        when(service.assignmentMapper.deleteById("auto-assignment")).thenReturn(1);
+        when(service.historyMapper.insert(any(TaskAssignmentHistoryEntity.class))).thenReturn(1);
+        when(service.scheduledLifecycleService.activatePendingIfReady(
+                eq(assignment), any(LocalDateTime.class))).thenReturn(true);
+
+        assertTrue(service.closeAssignment(
+                assignment, "TIMED_OUT", "two hour limit", true));
+
+        verify(service.scheduledLifecycleService).activatePendingIfReady(
+                eq(assignment), any(LocalDateTime.class));
+        verify(service.dispatchQueueService, never()).requeue(any());
+    }
+
+    @Test
     void scheduledAssignmentPersistsItsServerOnlySourceAndStartsTheSameRun() {
         var service = new TaskAssignmentService();
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
@@ -116,6 +137,7 @@ class TaskAssignmentServiceTest {
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
         service.dynamicInfo = new DynamicInfo();
         service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.insert(any(TaskAssignmentEntity.class))).thenReturn(1);
@@ -139,6 +161,7 @@ class TaskAssignmentServiceTest {
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
         service.dynamicInfo = new DynamicInfo();
         service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.insert(any(TaskAssignmentEntity.class))).thenReturn(1);
@@ -174,6 +197,7 @@ class TaskAssignmentServiceTest {
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
         service.dynamicInfo = new DynamicInfo();
         service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.deleteById("assignment-1")).thenReturn(1);
@@ -211,6 +235,7 @@ class TaskAssignmentServiceTest {
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
         service.dynamicInfo = new DynamicInfo();
         service.dispatchQueueService = mock(DispatchQueueService.class);
         when(service.assignmentMapper.deleteById("assignment-normal")).thenReturn(1);
@@ -320,6 +345,7 @@ class TaskAssignmentServiceTest {
         service.assignmentMapper = mock(TaskAssignmentMapper.class);
         service.historyMapper = mock(TaskAssignmentHistoryMapper.class);
         service.urgentTaskService = mock(UrgentTaskService.class);
+        service.scheduledLifecycleService = mock(AccountScheduledRunLifecycleService.class);
         service.dynamicInfo = new DynamicInfo();
         service.dispatchQueueService = mock(DispatchQueueService.class);
         var now = LocalDateTime.of(2026, 7, 19, 13, 0);

@@ -252,6 +252,8 @@ public class TaskAssignmentService {
             } else if (shouldCancelScheduled(status, reason)) {
                 scheduledLifecycleService.cancel(assignment, closedAt);
             }
+        } else if (scheduledLifecycleService.activatePendingIfReady(assignment, closedAt)) {
+            shouldRequeue = false;
         }
         if (shouldRequeue) {
             if (assignment.getUrgentTaskId() != null) {

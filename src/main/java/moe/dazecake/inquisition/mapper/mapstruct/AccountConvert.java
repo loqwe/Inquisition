@@ -13,6 +13,10 @@ public interface AccountConvert {
     AccountConvert INSTANCE = Mappers.getMapper(AccountConvert.class);
 
     @Mapping(target = "todayLoginCount", ignore = true)
+    @Mapping(target = "dispatchMode", ignore = true)
+    @Mapping(target = "scheduleTime", ignore = true)
+    @Mapping(target = "nextScheduledAt", ignore = true)
+    @Mapping(target = "scheduleStatus", ignore = true)
     AccountWithSanVO toAccountWithSanVO(AccountEntity accountEntity, String san);
 
     AccountEntity toAccountEntity(AccountDTO accountDTO);

@@ -1,6 +1,7 @@
 package moe.dazecake.inquisition.service.intf;
 
 import moe.dazecake.inquisition.constant.enums.TaskType;
+import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.account.AddAccountDTO;
 import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
@@ -46,6 +47,9 @@ public interface AccountService {
      * @date 2023/1/25 23:48
      */
     void updateAccount(AccountDTO accountDTO, Set<String> presentFields);
+
+    void updateAccount(AccountDTO accountDTO, Set<String> presentFields,
+                       AccountDispatchConfigDTO dispatchConfig);
 
     /**
      * 分页查询所有账号
