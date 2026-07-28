@@ -51,11 +51,12 @@ public class AccountScheduledDispatchService {
                 }
             }
         }
-        if (failed > 0) {
-            log.warn("账号定时调度批次部分失败: processed={}, failed={}", processed, failed);
-            throw new PartialScheduledDispatchException(failed);
-        }
         var dispatchable = restoreDispatchable(now);
+        if (failed > 0) {
+            log.warn("账号定时调度批次部分失败: processed={}, failed={}, dispatchable={}",
+                    processed, failed, dispatchable.size());
+            throw new PartialScheduledDispatchException(failed, dispatchable);
+        }
         log.info("账号定时调度扫描完成: processed={}, failed={}, dispatchable={}",
                 processed, failed, dispatchable.size());
         return dispatchable;
