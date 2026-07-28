@@ -6,6 +6,7 @@ import moe.dazecake.inquisition.mapper.AccountDispatchTimeMapper;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
 import moe.dazecake.inquisition.mapper.LogMapper;
+import moe.dazecake.inquisition.mapper.TaskAssignmentHistoryMapper;
 import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
@@ -469,6 +470,8 @@ class AccountServiceImplTest {
     private static DailyLoginService dailyLoginService(LogMapper logMapper) {
         var service = new DailyLoginService();
         service.logMapper = logMapper;
+        service.taskAssignmentHistoryMapper = mock(TaskAssignmentHistoryMapper.class);
+        when(service.taskAssignmentHistoryMapper.selectList(any())).thenReturn(List.of());
         return service;
     }
 }

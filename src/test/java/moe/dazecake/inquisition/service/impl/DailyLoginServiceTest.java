@@ -1,7 +1,9 @@
 package moe.dazecake.inquisition.service.impl;
 
 import moe.dazecake.inquisition.mapper.LogMapper;
+import moe.dazecake.inquisition.mapper.TaskAssignmentHistoryMapper;
 import moe.dazecake.inquisition.model.entity.LogEntity;
+import moe.dazecake.inquisition.model.entity.TaskAssignmentHistoryEntity;
 import moe.dazecake.inquisition.utils.GameDayClock;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +24,7 @@ class DailyLoginServiceTest {
     void countsOnlySuccessfulLoginsInCurrentGameDay() {
         var service = new DailyLoginService();
         service.logMapper = mock(LogMapper.class);
+        service.taskAssignmentHistoryMapper = mock(TaskAssignmentHistoryMapper.class);
         var now = LocalDateTime.of(2026, 7, 27, 14, 0);
         var gameDayStart = GameDayClock.startOfGameDay(now);
         when(service.logMapper.selectList(any())).thenReturn(List.of(
@@ -33,6 +36,7 @@ class DailyLoginServiceTest {
                 loginLog(2L, "登录成功", gameDayStart.plusHours(1)).setFrom("SYSTEM"),
                 loginLog(2L, "登录成功", gameDayStart.plusHours(1)).setDelete(1)
         ));
+        when(service.taskAssignmentHistoryMapper.selectList(any())).thenReturn(List.of());
 
         var counts = service.getLoginCounts(Set.of(1L, 2L), now);
 
@@ -45,6 +49,7 @@ class DailyLoginServiceTest {
     void countsEachAssignmentOnlyOnce() {
         var service = new DailyLoginService();
         service.logMapper = mock(LogMapper.class);
+        service.taskAssignmentHistoryMapper = mock(TaskAssignmentHistoryMapper.class);
         var now = LocalDateTime.of(2026, 7, 27, 14, 0);
         var gameDayStart = GameDayClock.startOfGameDay(now);
         when(service.logMapper.selectList(any())).thenReturn(List.of(
@@ -54,10 +59,55 @@ class DailyLoginServiceTest {
                 loginLog(91L, "登录成功", gameDayStart.plusHours(4).plusSeconds(9)).setAssignmentId("assignment-b"),
                 loginLog(91L, "登录成功", gameDayStart.plusHours(4).plusMinutes(1)).setAssignmentId("assignment-b")
         ));
+        when(service.taskAssignmentHistoryMapper.selectList(any())).thenReturn(List.of());
 
         var counts = service.getLoginCounts(Set.of(91L), now);
 
         assertEquals(2, counts.get(91L));
+    }
+
+    @Test
+    void countsCompletedFullDailyAssignmentWithoutLoginLog() {
+        var service = new DailyLoginService();
+        service.logMapper = mock(LogMapper.class);
+        service.taskAssignmentHistoryMapper = mock(TaskAssignmentHistoryMapper.class);
+        var now = LocalDateTime.of(2026, 7, 27, 14, 0);
+        var gameDayStart = GameDayClock.startOfGameDay(now);
+        when(service.logMapper.selectList(any())).thenReturn(List.of());
+        when(service.taskAssignmentHistoryMapper.selectList(any())).thenReturn(List.of(
+                completedDaily(91L, "assignment-a", gameDayStart.plusHours(2)),
+                completedDaily(91L, "assignment-login-only", gameDayStart.plusHours(2))
+                        .setTaskMode("LOGIN_ONLY"),
+                completedDaily(91L, "assignment-rogue", gameDayStart.plusHours(2))
+                        .setTaskType("rogue"),
+                completedDaily(91L, "assignment-failed", gameDayStart.plusHours(2))
+                        .setStatus("FAILED"),
+                completedDaily(91L, "assignment-old", gameDayStart.minusNanos(1))
+        ));
+
+        var counts = service.getLoginCounts(Set.of(91L), now);
+
+        assertEquals(1, counts.get(91L));
+    }
+
+    @Test
+    void doesNotDoubleCountLoginLogAndCompletionForSameAssignment() {
+        var service = new DailyLoginService();
+        service.logMapper = mock(LogMapper.class);
+        service.taskAssignmentHistoryMapper = mock(TaskAssignmentHistoryMapper.class);
+        var now = LocalDateTime.of(2026, 7, 27, 14, 0);
+        var gameDayStart = GameDayClock.startOfGameDay(now);
+        when(service.logMapper.selectList(any())).thenReturn(List.of(
+                loginLog(91L, "登录成功", gameDayStart.plusMinutes(10))
+                        .setAssignmentId("assignment-a")
+        ));
+        when(service.taskAssignmentHistoryMapper.selectList(any())).thenReturn(List.of(
+                completedDaily(91L, "assignment-a", gameDayStart.plusHours(1))
+        ));
+
+        var counts = service.getLoginCounts(Set.of(91L), now);
+
+        assertEquals(1, counts.get(91L));
     }
 
     private static LogEntity loginLog(Long accountId, String title, LocalDateTime time) {
@@ -68,5 +118,16 @@ class DailyLoginServiceTest {
                 .setFrom("device-token")
                 .setDelete(0)
                 .setTime(time);
+    }
+
+    private static TaskAssignmentHistoryEntity completedDaily(Long accountId, String assignmentId,
+                                                               LocalDateTime finishedAt) {
+        return new TaskAssignmentHistoryEntity()
+                .setAccountId(accountId)
+                .setAssignmentId(assignmentId)
+                .setTaskType("daily")
+                .setTaskMode("NORMAL")
+                .setStatus("COMPLETED")
+                .setFinishedAt(finishedAt);
     }
 }

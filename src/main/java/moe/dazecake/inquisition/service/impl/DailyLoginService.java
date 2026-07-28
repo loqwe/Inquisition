@@ -2,7 +2,9 @@ package moe.dazecake.inquisition.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import moe.dazecake.inquisition.mapper.LogMapper;
+import moe.dazecake.inquisition.mapper.TaskAssignmentHistoryMapper;
 import moe.dazecake.inquisition.model.entity.LogEntity;
+import moe.dazecake.inquisition.model.entity.TaskAssignmentHistoryEntity;
 import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.GameLogClassifier;
 import org.springframework.stereotype.Service;
@@ -17,9 +19,15 @@ import java.util.Set;
 
 @Service
 public class DailyLoginService {
+    private static final String COMPLETED = "COMPLETED";
+    private static final String DAILY = "daily";
+    private static final String NORMAL = "NORMAL";
 
     @Resource
     LogMapper logMapper;
+
+    @Resource
+    TaskAssignmentHistoryMapper taskAssignmentHistoryMapper;
 
     public Map<Long, Integer> getLoginCounts(Collection<Long> requestedAccountIds, LocalDateTime now) {
         var counts = new HashMap<Long, Integer>();
@@ -58,6 +66,23 @@ public class DailyLoginService {
             }
             counts.merge(log.getAccountId(), 1, Integer::sum);
         }
+        var completedDailyAssignments = taskAssignmentHistoryMapper.selectList(
+                Wrappers.<TaskAssignmentHistoryEntity>lambdaQuery()
+                        .in(TaskAssignmentHistoryEntity::getAccountId, accountIds)
+                        .eq(TaskAssignmentHistoryEntity::getStatus, COMPLETED)
+                        .eq(TaskAssignmentHistoryEntity::getTaskType, DAILY)
+                        .eq(TaskAssignmentHistoryEntity::getTaskMode, NORMAL)
+                        .ge(TaskAssignmentHistoryEntity::getFinishedAt, gameDayStart));
+        for (TaskAssignmentHistoryEntity assignment : completedDailyAssignments) {
+            if (!isCountableCompletedDaily(assignment, accountIds, gameDayStart)) {
+                continue;
+            }
+            if (!countedAssignments.computeIfAbsent(assignment.getAccountId(), ignored -> new HashSet<>())
+                    .add(assignment.getAssignmentId())) {
+                continue;
+            }
+            counts.merge(assignment.getAccountId(), 1, Integer::sum);
+        }
         return counts;
     }
 
@@ -73,5 +98,19 @@ public class DailyLoginService {
                 && !log.getFrom().isBlank()
                 && !"SYSTEM".equalsIgnoreCase(log.getFrom())
                 && GameLogClassifier.isSuccessfulLoginLog(log.getTitle());
+    }
+
+    private boolean isCountableCompletedDaily(TaskAssignmentHistoryEntity assignment,
+                                              Set<Long> accountIds,
+                                              LocalDateTime gameDayStart) {
+        return assignment != null
+                && accountIds.contains(assignment.getAccountId())
+                && assignment.getAssignmentId() != null
+                && !assignment.getAssignmentId().isBlank()
+                && COMPLETED.equals(assignment.getStatus())
+                && DAILY.equals(assignment.getTaskType())
+                && NORMAL.equals(assignment.getTaskMode())
+                && assignment.getFinishedAt() != null
+                && !assignment.getFinishedAt().isBefore(gameDayStart);
     }
 }
