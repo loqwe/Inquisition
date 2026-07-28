@@ -165,6 +165,30 @@ class AccountServiceImplTest {
     }
 
     @Test
+    void missingLoginFilterUsesDatabasePageBeforeHydration() {
+        var service = new AccountServiceImpl();
+        service.accountMapper = mock(AccountMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.dailyLoginService = dailyLoginService(mock(LogMapper.class));
+        initializeDispatchHydration(service);
+        var now = LocalDateTime.of(2026, 7, 29, 10, 0);
+        var gameDayStart = GameDayClock.startOfGameDay(now);
+        var page = new Page<AccountEntity>(1, 10);
+        page.setRecords(List.of(new AccountEntity().setId(7L).setName("账号7")
+                .setAccount("account-7")));
+        page.setTotal(1);
+        when(service.accountMapper.selectMissingDailyLoginPage(any(Page.class), eq(now), eq(gameDayStart)))
+                .thenReturn(page);
+
+        var result = service.queryAllAccount(1L, 10L, null, null, null, null,
+                "missing", now);
+
+        assertEquals(1, result.getTotal());
+        assertEquals(7L, result.getRecords().get(0).getId());
+        verify(service.accountMapper).selectMissingDailyLoginPage(any(Page.class), eq(now), eq(gameDayStart));
+    }
+
+    @Test
     void updateAccountPartialPayloadDoesNotResetConfigDefaults() {
         var service = new AccountServiceImpl();
         service.accountMapper = mock(AccountMapper.class);

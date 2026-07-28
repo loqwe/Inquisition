@@ -103,6 +103,16 @@ class AccountControllerTest {
         verify(service, never()).updateAccount(any(), any(), any());
     }
 
+    @Test
+    void showAccountForwardsMissingLoginFilter() {
+        var service = mock(AccountServiceImpl.class);
+        var controller = controller(service);
+
+        controller.showAccount(1L, 10L, null, null, null, null, "missing");
+
+        verify(service).queryAllAccount(1L, 10L, null, null, null, null, "missing");
+    }
+
     private static AccountController controller(AccountServiceImpl service) {
         var controller = new AccountController();
         controller.accountService = service;
