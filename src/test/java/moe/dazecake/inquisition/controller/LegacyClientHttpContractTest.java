@@ -36,6 +36,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class LegacyClientHttpContractTest {
@@ -79,6 +80,20 @@ class LegacyClientHttpContractTest {
 
         verify(service).completeTask("device-1", null, "image");
         verify(service).failTask("device-1", null, "network", "image");
+    }
+
+    @Test
+    void legacyGetTaskKeepsDeviceTokenQueryParameter() throws Exception {
+        var service = mock(TaskServiceImpl.class);
+        when(service.getTask("device-1")).thenReturn(Result.success(new AccountDTO(), "success"));
+        var controller = new TaskController();
+        controller.taskService = service;
+        var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mvc.perform(get("/getTask").param("deviceToken", "device-1"))
+                .andExpect(status().isOk());
+
+        verify(service).getTask("device-1");
     }
 
     @Test
