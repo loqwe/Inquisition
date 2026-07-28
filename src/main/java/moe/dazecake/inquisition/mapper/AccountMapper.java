@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Mapper
 public interface AccountMapper extends BaseMapper<AccountEntity> {
@@ -42,28 +43,7 @@ public interface AccountMapper extends BaseMapper<AccountEntity> {
             "AND a.freeze = 0",
             "AND a.task_type = 'daily'",
             "AND a.expire_time >= #{now}",
-            "AND NOT EXISTS (",
-            "  SELECT 1 FROM log l",
-            "  WHERE l.account_id = a.id",
-            "  AND l.time >= #{gameDayStart}",
-            "  AND l.`delete` = 0",
-            "  AND UPPER(l.level) = 'INFO'",
-            "  AND l.`from` IS NOT NULL",
-            "  AND l.`from` <> ''",
-            "  AND UPPER(l.`from`) <> 'SYSTEM'",
-            "  AND l.title LIKE '%登录成功%'",
-            ")",
-            "AND NOT EXISTS (",
-            "  SELECT 1 FROM task_assignment_history h",
-            "  WHERE h.account_id = a.id",
-            "  AND h.finished_at >= #{gameDayStart}",
-            "  AND h.status = 'COMPLETED'",
-            "  AND h.task_type = 'daily'",
-            "  AND h.task_mode = 'NORMAL'",
-            ")",
             "ORDER BY a.id ASC"
     })
-    Page<AccountEntity> selectMissingDailyLoginPage(Page<AccountEntity> page,
-                                                    @Param("now") LocalDateTime now,
-                                                    @Param("gameDayStart") LocalDateTime gameDayStart);
+    List<AccountEntity> selectEligibleDailyAccounts(@Param("now") LocalDateTime now);
 }

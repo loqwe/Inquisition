@@ -29,8 +29,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -366,9 +368,30 @@ public class AccountServiceImpl implements AccountService {
                                                          LocalDateTime requestedNow) {
         var now = requestedNow == null ? GameDayClock.now() : requestedNow;
         if ("missing".equalsIgnoreCase(login)) {
-            var data = accountMapper.selectMissingDailyLoginPage(new Page<>(current, size), now,
-                    GameDayClock.startOfGameDay(now));
-            return getAccountWithSanVOPageQueryVO(data);
+            var eligibleAccounts = accountMapper.selectEligibleDailyAccounts(now);
+            if (eligibleAccounts == null) {
+                eligibleAccounts = List.of();
+            }
+            var accountIds = eligibleAccounts.stream()
+                    .filter(Objects::nonNull)
+                    .map(AccountEntity::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            var fetchedLoginCounts = dailyLoginService.getLoginCounts(accountIds, now);
+            var loginCounts = fetchedLoginCounts == null ? Map.<Long, Integer>of() : fetchedLoginCounts;
+            var missingAccounts = eligibleAccounts.stream()
+                    .filter(Objects::nonNull)
+                    .filter(account -> account.getId() != null)
+                    .filter(account -> loginCounts.getOrDefault(account.getId(), 0) < 1)
+                    .collect(Collectors.toList());
+            var safeCurrent = current == null || current < 1 ? 1L : current;
+            var safeSize = size == null || size < 1 ? 10L : size;
+            var fromIndex = Math.min(missingAccounts.size(), Math.toIntExact((safeCurrent - 1) * safeSize));
+            var toIndex = Math.min(missingAccounts.size(), Math.toIntExact(fromIndex + safeSize));
+            var data = new Page<AccountEntity>(safeCurrent, safeSize);
+            data.setTotal(missingAccounts.size());
+            data.setRecords(new ArrayList<>(missingAccounts.subList(fromIndex, toIndex)));
+            return getAccountWithSanVOPageQueryVO(data, now, loginCounts);
         }
 
         var wrapper = Wrappers.<AccountEntity>lambdaQuery();
@@ -547,6 +570,19 @@ public class AccountServiceImpl implements AccountService {
 
     @NotNull
     public PageQueryVO<AccountWithSanVO> getAccountWithSanVOPageQueryVO(Page<AccountEntity> data) {
+        return getAccountWithSanVOPageQueryVO(data, GameDayClock.now());
+    }
+
+    @NotNull
+    private PageQueryVO<AccountWithSanVO> getAccountWithSanVOPageQueryVO(Page<AccountEntity> data,
+                                                                         LocalDateTime now) {
+        return getAccountWithSanVOPageQueryVO(data, now, null);
+    }
+
+    @NotNull
+    private PageQueryVO<AccountWithSanVO> getAccountWithSanVOPageQueryVO(Page<AccountEntity> data,
+                                                                         LocalDateTime now,
+                                                                         Map<Long, Integer> knownLoginCounts) {
         var result = new PageQueryVO<AccountWithSanVO>();
         result.setCurrent(data.getCurrent());
         result.setPage(data.getPages());
@@ -557,7 +593,12 @@ public class AccountServiceImpl implements AccountService {
                 accountIds.add(account.getId());
             }
         });
-        var todayLoginCounts = dailyLoginService.getLoginCounts(accountIds, GameDayClock.now());
+        var todayLoginCounts = knownLoginCounts == null
+                ? dailyLoginService.getLoginCounts(accountIds, now)
+                : knownLoginCounts;
+        if (todayLoginCounts == null) {
+            todayLoginCounts = Map.of();
+        }
         var dispatchConfigs = dispatchConfigs(accountIds);
         var scheduledAccountIds = dispatchConfigs.values().stream()
                 .filter(config -> AccountDispatchConfigService.SCHEDULED.equals(

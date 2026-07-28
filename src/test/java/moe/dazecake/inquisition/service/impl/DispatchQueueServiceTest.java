@@ -42,11 +42,11 @@ class DispatchQueueServiceTest {
         when(service.urgentTaskService.findActiveByAccount(7L, GameDayClock.gameDay(NOW)))
                 .thenReturn(Optional.of(urgentTask(62L, 7L, NOW.minusMinutes(1))));
 
-        assertTrue(service.enqueueAuto(1L));
-        assertTrue(service.enqueueAuto(2L));
-        assertTrue(service.enqueueManual(3L));
-        assertTrue(service.enqueueScheduled(firstScheduled));
-        assertTrue(service.enqueueScheduled(secondScheduled));
+        assertTrue(service.enqueueAuto(1L, NOW));
+        assertTrue(service.enqueueAuto(2L, NOW));
+        assertTrue(service.enqueueManual(3L, NOW));
+        assertTrue(service.enqueueScheduled(firstScheduled, NOW));
+        assertTrue(service.enqueueScheduled(secondScheduled, NOW));
         assertTrue(service.enqueueUrgent(6L, NOW));
         assertTrue(service.enqueueUrgent(7L, NOW));
 

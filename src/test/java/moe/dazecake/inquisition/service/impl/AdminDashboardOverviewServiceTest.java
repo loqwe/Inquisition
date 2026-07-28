@@ -38,7 +38,7 @@ class AdminDashboardOverviewServiceTest {
         service.scheduledTaskMonitorService = mock(ScheduledTaskMonitorService.class);
         var now = LocalDateTime.of(2026, 7, 29, 14, 0);
         when(service.dashboardMetricsMapper.selectAccountMetrics(any(), any(), any(), any()))
-                .thenReturn(new DashboardAccountMetrics().setEligibleDaily(63L).setMissingLogin(2L)
+                .thenReturn(new DashboardAccountMetrics().setEligibleDaily(63L).setMissingLogin(62L)
                         .setFrozen(1L).setExpiringWithinSevenDays(3L)
                         .setNewAccountsToday(4L).setValidAccounts(64L));
         when(service.dashboardMetricsMapper.selectBusinessMetrics(any(), any(), any(), any()))

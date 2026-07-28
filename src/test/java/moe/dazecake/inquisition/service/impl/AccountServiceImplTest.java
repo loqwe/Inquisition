@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -165,27 +166,31 @@ class AccountServiceImplTest {
     }
 
     @Test
-    void missingLoginFilterUsesDatabasePageBeforeHydration() {
+    void missingLoginFilterUsesBatchLoginCountsBeforeInMemoryPagination() {
         var service = new AccountServiceImpl();
         service.accountMapper = mock(AccountMapper.class);
         service.dynamicInfo = new DynamicInfo();
-        service.dailyLoginService = dailyLoginService(mock(LogMapper.class));
+        service.dailyLoginService = mock(DailyLoginService.class);
         initializeDispatchHydration(service);
         var now = LocalDateTime.of(2026, 7, 29, 10, 0);
-        var gameDayStart = GameDayClock.startOfGameDay(now);
-        var page = new Page<AccountEntity>(1, 10);
-        page.setRecords(List.of(new AccountEntity().setId(7L).setName("账号7")
-                .setAccount("account-7")));
-        page.setTotal(1);
-        when(service.accountMapper.selectMissingDailyLoginPage(any(Page.class), eq(now), eq(gameDayStart)))
-                .thenReturn(page);
+        var eligible = List.of(
+                new AccountEntity().setId(7L).setName("账号7").setAccount("account-7"),
+                new AccountEntity().setId(8L).setName("账号8").setAccount("account-8"),
+                new AccountEntity().setId(9L).setName("账号9").setAccount("account-9")
+        );
+        when(service.accountMapper.selectEligibleDailyAccounts(now)).thenReturn(eligible);
+        when(service.dailyLoginService.getLoginCounts(any(), any()))
+                .thenReturn(Map.of(7L, 1));
 
-        var result = service.queryAllAccount(1L, 10L, null, null, null, null,
+        var result = service.queryAllAccount(1L, 1L, null, null, null, null,
                 "missing", now);
 
-        assertEquals(1, result.getTotal());
-        assertEquals(7L, result.getRecords().get(0).getId());
-        verify(service.accountMapper).selectMissingDailyLoginPage(any(Page.class), eq(now), eq(gameDayStart));
+        assertEquals(2, result.getTotal());
+        assertEquals(2, result.getPage());
+        assertEquals(8L, result.getRecords().get(0).getId());
+        assertEquals(0, result.getRecords().get(0).getTodayLoginCount());
+        verify(service.accountMapper).selectEligibleDailyAccounts(now);
+        verify(service.dailyLoginService).getLoginCounts(Set.of(7L, 8L, 9L), now);
     }
 
     @Test
