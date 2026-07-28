@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalTime;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -59,6 +60,23 @@ class AccountControllerTest {
         verify(service).updateAccount(any(AccountDTO.class), fields.capture(), config.capture());
         assertFalse(fields.getValue().contains("dispatchConfig"));
         assertNull(config.getValue());
+    }
+
+    @Test
+    void updateAccountAcceptsMultipleScheduleTimes() throws Exception {
+        var service = mock(AccountServiceImpl.class);
+        var controller = controller(service);
+        var payload = controller.objectMapper.readTree("{\"id\":1,"
+                + "\"dispatchConfig\":{\"dispatchMode\":\"SCHEDULED\","
+                + "\"scheduleTimes\":[\"08:00\",\"14:00\",\"19:30\"]}}");
+
+        var result = controller.updateAccount(payload);
+
+        assertEquals(200, result.getCode());
+        var config = ArgumentCaptor.forClass(AccountDispatchConfigDTO.class);
+        verify(service).updateAccount(any(AccountDTO.class), any(), config.capture());
+        assertEquals(List.of(LocalTime.of(8, 0), LocalTime.of(14, 0),
+                LocalTime.of(19, 30)), config.getValue().getScheduleTimes());
     }
 
     @Test

@@ -42,6 +42,11 @@ public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchC
             "FROM account_dispatch_config",
             "WHERE dispatch_mode = 'SCHEDULED'",
             "AND next_scheduled_at <= #{now}",
+            "AND NOT EXISTS (",
+            "SELECT 1 FROM account_scheduled_run run",
+            "WHERE run.account_id = account_dispatch_config.account_id",
+            "AND run.status IN ('WAITING', 'RUNNING', 'RETRY_WAIT')",
+            ")",
             "ORDER BY next_scheduled_at, account_id",
             "LIMIT #{limit}"
     })

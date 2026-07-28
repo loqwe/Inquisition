@@ -155,6 +155,9 @@ class AccountScheduledDispatchServiceTest {
         var sql = String.join(" ", method.getAnnotation(Select.class).value());
 
         assertTrue(sql.contains("next_scheduled_at <= #{now}"));
+        assertTrue(sql.contains("NOT EXISTS"));
+        assertTrue(sql.contains("run.account_id = account_dispatch_config.account_id"));
+        assertTrue(sql.contains("run.status IN ('WAITING', 'RUNNING', 'RETRY_WAIT')"));
         assertTrue(sql.contains("ORDER BY next_scheduled_at, account_id"));
         assertTrue(sql.contains("LIMIT #{limit}"));
     }

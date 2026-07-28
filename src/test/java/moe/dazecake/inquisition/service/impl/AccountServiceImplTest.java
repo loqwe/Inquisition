@@ -2,12 +2,14 @@ package moe.dazecake.inquisition.service.impl;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
+import moe.dazecake.inquisition.mapper.AccountDispatchTimeMapper;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
 import moe.dazecake.inquisition.mapper.LogMapper;
 import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
+import moe.dazecake.inquisition.model.entity.AccountDispatchTimeEntity;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
 import moe.dazecake.inquisition.model.entity.ActivationDateSet.ActivationDate;
@@ -52,6 +54,7 @@ class AccountServiceImplTest {
         service.taskService = mock(TaskServiceImpl.class);
         service.dispatchQueueService = mock(DispatchQueueService.class);
         service.dispatchConfigMapper = mock(AccountDispatchConfigMapper.class);
+        service.dispatchTimeMapper = mock(AccountDispatchTimeMapper.class);
         service.scheduledRunService = mock(AccountScheduledRunService.class);
         when(service.scheduledRunService.findActiveByAccount(423L)).thenReturn(Optional.of(
                 new AccountScheduledRunEntity().setId(41L).setAccountId(423L)
@@ -68,6 +71,7 @@ class AccountServiceImplTest {
         verify(service.scheduledRunService).cancel(41L);
         verify(service.dispatchQueueService).remove(423L);
         verify(service.dispatchConfigMapper).deleteById(423L);
+        verify(service.dispatchTimeMapper).deleteByAccountId(423L);
         verify(service.accountMapper).hardDeleteById(423L);
         verify(service.accountMapper, never()).updateById(org.mockito.ArgumentMatchers.any());
         org.junit.jupiter.api.Assertions.assertFalse(service.dynamicInfo.getUserSanInfoMap().containsKey(423L));
@@ -303,13 +307,15 @@ class AccountServiceImplTest {
     void activeWeekOnlyUpdateReusesExistingScheduledTimeInsteadOfResettingMode() {
         var service = dispatchUpdateService();
         var existing = activeAccount(1L);
+        var existingConfig = new AccountDispatchConfigEntity().setAccountId(1L)
+                .setDispatchMode(AccountDispatchConfigService.SCHEDULED)
+                .setScheduleTime(LocalTime.of(8, 0));
         when(service.accountMapper.selectById(1L)).thenReturn(existing);
         when(service.taskAssignmentService.findByAccount(1L)).thenReturn(Optional.empty());
         when(service.scheduledRunService.findActiveByAccount(1L)).thenReturn(Optional.empty());
-        when(service.dispatchConfigService.getOrDefault(1L)).thenReturn(
-                new AccountDispatchConfigEntity().setAccountId(1L)
-                        .setDispatchMode(AccountDispatchConfigService.SCHEDULED)
-                        .setScheduleTime(LocalTime.of(19, 30)));
+        when(service.dispatchConfigService.getOrDefault(1L)).thenReturn(existingConfig);
+        when(service.dispatchConfigService.getScheduleTimes(existingConfig)).thenReturn(
+                List.of(LocalTime.of(8, 0), LocalTime.of(14, 0), LocalTime.of(19, 30)));
         var update = new AccountDTO();
         update.setId(1L);
         var active = new ActivationDate();
@@ -323,7 +329,8 @@ class AccountServiceImplTest {
                 eq(existing), config.capture(), eq(false), any(LocalDateTime.class));
         assertEquals(AccountDispatchConfigService.SCHEDULED,
                 config.getValue().getDispatchMode());
-        assertEquals(LocalTime.of(19, 30), config.getValue().getScheduleTime());
+        assertEquals(List.of(LocalTime.of(8, 0), LocalTime.of(14, 0), LocalTime.of(19, 30)),
+                config.getValue().getScheduleTimes());
     }
 
     @Test
@@ -378,6 +385,7 @@ class AccountServiceImplTest {
         service.dynamicInfo = new DynamicInfo();
         service.dailyLoginService = dailyLoginService(mock(LogMapper.class));
         service.dispatchConfigMapper = mock(AccountDispatchConfigMapper.class);
+        service.dispatchTimeMapper = mock(AccountDispatchTimeMapper.class);
         service.scheduledRunMapper = mock(AccountScheduledRunMapper.class);
         var page = new Page<AccountEntity>(1, 10);
         page.setRecords(List.of(activeAccount(1L), activeAccount(2L)));
@@ -386,10 +394,15 @@ class AccountServiceImplTest {
         when(service.dispatchConfigMapper.selectBatchIds(any())).thenReturn(List.of(
                 new AccountDispatchConfigEntity().setAccountId(1L)
                         .setDispatchMode(AccountDispatchConfigService.SCHEDULED)
-                        .setScheduleTime(LocalTime.of(19, 30)).setNextScheduledAt(next),
+                        .setScheduleTime(LocalTime.of(8, 0)).setNextScheduledAt(next),
                 new AccountDispatchConfigEntity().setAccountId(2L)
                         .setDispatchMode(AccountDispatchConfigService.SCHEDULED)
                         .setScheduleTime(LocalTime.of(20, 0))));
+        when(service.dispatchTimeMapper.selectByAccountIds(any())).thenReturn(List.of(
+                new AccountDispatchTimeEntity().setAccountId(1L).setScheduleTime(LocalTime.of(8, 0)),
+                new AccountDispatchTimeEntity().setAccountId(1L).setScheduleTime(LocalTime.of(14, 0)),
+                new AccountDispatchTimeEntity().setAccountId(1L).setScheduleTime(LocalTime.of(19, 30)),
+                new AccountDispatchTimeEntity().setAccountId(2L).setScheduleTime(LocalTime.of(20, 0))));
         when(service.scheduledRunMapper.selectLatestByAccountIds(any())).thenReturn(List.of(
                 new AccountScheduledRunEntity().setId(41L).setAccountId(1L)
                         .setStatus(AccountScheduledRunService.STATUS_SUCCEEDED),
@@ -400,7 +413,9 @@ class AccountServiceImplTest {
 
         assertEquals(AccountDispatchConfigService.SCHEDULED,
                 result.getRecords().get(0).getDispatchMode());
-        assertEquals(LocalTime.of(19, 30), result.getRecords().get(0).getScheduleTime());
+        assertEquals(LocalTime.of(8, 0), result.getRecords().get(0).getScheduleTime());
+        assertEquals(List.of(LocalTime.of(8, 0), LocalTime.of(14, 0), LocalTime.of(19, 30)),
+                result.getRecords().get(0).getScheduleTimes());
         assertEquals(next, result.getRecords().get(0).getNextScheduledAt());
         assertEquals("NORMAL", result.getRecords().get(0).getScheduleStatus());
         assertEquals(AccountScheduledRunService.STATUS_WAITING,
@@ -419,11 +434,13 @@ class AccountServiceImplTest {
         service.taskAssignmentService = mock(TaskAssignmentService.class);
         service.scheduledRunService = mock(AccountScheduledRunService.class);
         service.dispatchConfigMapper = mock(AccountDispatchConfigMapper.class);
+        service.dispatchTimeMapper = mock(AccountDispatchTimeMapper.class);
         return service;
     }
 
     private static void initializeDispatchHydration(AccountServiceImpl service) {
         service.dispatchConfigMapper = mock(AccountDispatchConfigMapper.class);
+        service.dispatchTimeMapper = mock(AccountDispatchTimeMapper.class);
         service.scheduledRunMapper = mock(AccountScheduledRunMapper.class);
     }
 

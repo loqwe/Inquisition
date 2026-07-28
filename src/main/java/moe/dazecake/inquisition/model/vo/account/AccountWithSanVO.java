@@ -6,6 +6,8 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 public class AccountWithSanVO extends AccountEntity {
@@ -14,6 +16,8 @@ public class AccountWithSanVO extends AccountEntity {
     private String dispatchMode = "AUTO";
     @JsonFormat(pattern = "HH:mm")
     private LocalTime scheduleTime;
+    @JsonFormat(pattern = "HH:mm")
+    private List<LocalTime> scheduleTimes = new ArrayList<>();
     private LocalDateTime nextScheduledAt;
     private String scheduleStatus;
 }

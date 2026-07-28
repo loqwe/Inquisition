@@ -4,8 +4,10 @@ import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
+import moe.dazecake.inquisition.mapper.AccountDispatchTimeMapper;
 import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
+import moe.dazecake.inquisition.model.entity.AccountDispatchTimeEntity;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.ActivationDateSet.ActivateConfig;
 import moe.dazecake.inquisition.model.entity.ActivationDateSet.ActivationDate;
@@ -43,29 +45,34 @@ import static org.mockito.Mockito.when;
 class AccountDispatchConfigServiceTest {
 
     private AccountDispatchConfigMapper configMapper;
+    private AccountDispatchTimeMapper timeMapper;
     private AccountDispatchConfigService service;
 
     @BeforeEach
     void setUp() {
         configMapper = mock(AccountDispatchConfigMapper.class);
+        timeMapper = mock(AccountDispatchTimeMapper.class);
         service = new AccountDispatchConfigService();
         service.configMapper = configMapper;
+        service.timeMapper = timeMapper;
         service.calculator = new AccountScheduleCalculator();
+        when(timeMapper.insert(any(AccountDispatchTimeEntity.class))).thenReturn(1);
     }
 
     @Test
-    void dtoContainsOnlyDispatchModeAndScheduleTimeAndParsesHourMinute() throws Exception {
+    void dtoSupportsMultipleTimesAndParsesHourMinute() throws Exception {
         Set<String> fields = Arrays.stream(AccountDispatchConfigDTO.class.getDeclaredFields())
                 .filter(field -> !field.isSynthetic())
                 .map(java.lang.reflect.Field::getName)
                 .collect(Collectors.toSet());
         var request = new ObjectMapper().findAndRegisterModules().readValue(
-                "{\"dispatchMode\":\"SCHEDULED\",\"scheduleTime\":\"19:30\"}",
+                "{\"dispatchMode\":\"SCHEDULED\",\"scheduleTimes\":[\"08:00\",\"19:30\"]}",
                 AccountDispatchConfigDTO.class);
 
-        assertEquals(Set.of("dispatchMode", "scheduleTime"), fields);
+        assertEquals(Set.of("dispatchMode", "scheduleTime", "scheduleTimes"), fields);
         assertEquals(AccountDispatchConfigService.SCHEDULED, request.getDispatchMode());
-        assertEquals(LocalTime.of(19, 30), request.getScheduleTime());
+        assertEquals(List.of(LocalTime.of(8, 0), LocalTime.of(19, 30)),
+                request.getScheduleTimes());
     }
 
     @Test
@@ -165,6 +172,64 @@ class AccountDispatchConfigServiceTest {
     }
 
     @Test
+    void rejectsMoreThanThreeScheduleTimes() {
+        var request = requestTimes(AccountDispatchConfigService.SCHEDULED,
+                LocalTime.of(6, 0), LocalTime.of(10, 0),
+                LocalTime.of(14, 0), LocalTime.of(18, 0));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.update(accountWithActiveMonday(), request, false, mondayMorning()));
+        verifyNoInteractions(configMapper);
+        verify(timeMapper, never()).deleteByAccountId(any());
+    }
+
+    @Test
+    void rejectsDuplicateScheduleTimes() {
+        var request = requestTimes(AccountDispatchConfigService.SCHEDULED,
+                LocalTime.of(8, 0), LocalTime.of(8, 0));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.update(accountWithActiveMonday(), request, false, mondayMorning()));
+        verifyNoInteractions(configMapper);
+        verify(timeMapper, never()).deleteByAccountId(any());
+    }
+
+    @Test
+    void rejectsConflictingLegacyAndMultipleTimeFields() {
+        var request = requestTimes(AccountDispatchConfigService.SCHEDULED,
+                LocalTime.of(8, 0), LocalTime.of(19, 30));
+        request.setScheduleTime(LocalTime.of(12, 0));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.update(accountWithActiveMonday(), request, false, mondayMorning()));
+        verifyNoInteractions(configMapper);
+        verify(timeMapper, never()).deleteByAccountId(any());
+    }
+
+    @Test
+    void storesSortedTimesAndUsesTheEarliestFutureOccurrence() {
+        var account = accountWithActiveMonday();
+        when(configMapper.upsert(any(AccountDispatchConfigEntity.class))).thenReturn(1);
+
+        service.update(account, requestTimes(AccountDispatchConfigService.SCHEDULED,
+                        LocalTime.of(19, 30), LocalTime.of(8, 0), LocalTime.of(14, 0)),
+                false, mondayMorning());
+
+        var configCaptor = ArgumentCaptor.forClass(AccountDispatchConfigEntity.class);
+        var timeCaptor = ArgumentCaptor.forClass(AccountDispatchTimeEntity.class);
+        verify(configMapper).upsert(configCaptor.capture());
+        verify(timeMapper).deleteByAccountId(account.getId());
+        verify(timeMapper, times(3)).insert(timeCaptor.capture());
+        assertEquals(List.of(LocalTime.of(8, 0), LocalTime.of(14, 0), LocalTime.of(19, 30)),
+                timeCaptor.getAllValues().stream()
+                        .map(AccountDispatchTimeEntity::getScheduleTime)
+                        .collect(Collectors.toList()));
+        assertEquals(LocalTime.of(8, 0), configCaptor.getValue().getScheduleTime());
+        assertEquals(LocalDateTime.of(2026, 7, 27, 14, 0),
+                configCaptor.getValue().getNextScheduledAt());
+    }
+
+    @Test
     void scheduledModeRequiresAnEnabledWeekdayEvenDuringAnActiveAssignment() {
         var request = request(AccountDispatchConfigService.SCHEDULED, LocalTime.of(19, 30));
 
@@ -232,6 +297,7 @@ class AccountDispatchConfigServiceTest {
         assertNull(saved.getScheduleTime());
         assertNull(saved.getNextScheduledAt());
         assertEquals(0, saved.getActivationPending());
+        verify(timeMapper).deleteByAccountId(account.getId());
     }
 
     @Test
@@ -377,6 +443,13 @@ class AccountDispatchConfigServiceTest {
         var request = new AccountDispatchConfigDTO();
         request.setDispatchMode(mode);
         request.setScheduleTime(time);
+        return request;
+    }
+
+    private AccountDispatchConfigDTO requestTimes(String mode, LocalTime... times) {
+        var request = new AccountDispatchConfigDTO();
+        request.setDispatchMode(mode);
+        request.setScheduleTimes(Arrays.asList(times));
         return request;
     }
 

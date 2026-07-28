@@ -51,6 +51,48 @@ class AccountScheduleCalculatorTest {
     }
 
     @Test
+    void selectsTheEarliestConfiguredTimeStillAheadToday() {
+        var account = accountEnabledOn(DayOfWeek.MONDAY);
+
+        var next = calculator.nextOccurrence(account,
+                List.of(LocalTime.of(19, 30), LocalTime.of(8, 0), LocalTime.of(14, 0)),
+                LocalDateTime.of(2026, 7, 27, 10, 0));
+
+        assertEquals(LocalDateTime.of(2026, 7, 27, 14, 0), next);
+    }
+
+    @Test
+    void multipleTimesRemainStrictlyLaterThanAnEqualBoundary() {
+        var account = accountEnabledOn(DayOfWeek.MONDAY);
+
+        var next = calculator.nextOccurrence(account,
+                List.of(LocalTime.of(8, 0), LocalTime.of(14, 0), LocalTime.of(19, 30)),
+                LocalDateTime.of(2026, 7, 27, 14, 0));
+
+        assertEquals(LocalDateTime.of(2026, 7, 27, 19, 30), next);
+    }
+
+    @Test
+    void multipleTimesCrossToTheFirstTimeOnTheNextEnabledDay() {
+        var account = accountEnabledOn(DayOfWeek.MONDAY);
+
+        var next = calculator.nextOccurrence(account,
+                List.of(LocalTime.of(19, 30), LocalTime.of(8, 0), LocalTime.of(14, 0)),
+                LocalDateTime.of(2026, 7, 27, 20, 0));
+
+        assertEquals(LocalDateTime.of(2026, 8, 3, 8, 0), next);
+    }
+
+    @Test
+    void rejectsAnEmptyTimeCollection() {
+        var account = accountEnabledOn(DayOfWeek.MONDAY);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> calculator.nextOccurrence(account, List.of(),
+                        LocalDateTime.of(2026, 7, 27, 10, 0)));
+    }
+
+    @Test
     void crossesTheWeekBoundaryToTheNextEnabledDay() {
         var account = accountEnabledOn(DayOfWeek.FRIDAY);
 

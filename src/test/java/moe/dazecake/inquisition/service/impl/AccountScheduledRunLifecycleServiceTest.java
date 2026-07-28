@@ -33,21 +33,20 @@ class AccountScheduledRunLifecycleServiceTest {
     }
 
     @Test
-    void completionSucceedsTheRunAndSchedulesOnlyTheNextFutureOccurrence() {
+    void completionSucceedsTheRunWithoutOverwritingTheAlreadyAdvancedPointer() {
         var service = service();
         var finishedAt = LocalDateTime.of(2026, 7, 28, 20, 0);
-        var next = LocalDateTime.of(2026, 7, 29, 19, 30);
         var assignment = scheduledAssignment();
-        var config = scheduledConfig().setActivationPending(0);
+        var config = scheduledConfig().setActivationPending(0)
+                .setNextScheduledAt(LocalDateTime.of(2026, 7, 29, 8, 0));
         when(service.configMapper.selectByIdForUpdate(7L)).thenReturn(config);
-        when(service.accountMapper.selectById(7L)).thenReturn(account());
         when(service.runService.succeed(41L)).thenReturn(true);
-        when(service.configMapper.scheduleNext(7L, next)).thenReturn(1);
 
         assertTrue(service.complete(assignment, finishedAt));
 
         verify(service.runService).succeed(41L);
-        verify(service.configMapper).scheduleNext(7L, next);
+        verify(service.configMapper, never()).scheduleNext(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         verify(service.configService, never()).activatePending(
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
@@ -142,7 +141,6 @@ class AccountScheduledRunLifecycleServiceTest {
         service.configMapper = mock(AccountDispatchConfigMapper.class);
         service.configService = mock(AccountDispatchConfigService.class);
         service.accountMapper = mock(AccountMapper.class);
-        service.calculator = new AccountScheduleCalculator();
         return service;
     }
 

@@ -1,8 +1,10 @@
 package moe.dazecake.inquisition.service.impl;
 
 import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
+import moe.dazecake.inquisition.mapper.AccountDispatchTimeMapper;
 import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
+import moe.dazecake.inquisition.model.entity.AccountDispatchTimeEntity;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,15 +12,23 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
+import java.util.TreeSet;
 
 @Service
 public class AccountDispatchConfigService {
     public static final String AUTO = "AUTO";
     public static final String SCHEDULED = "SCHEDULED";
+    public static final int MAX_SCHEDULE_TIMES = 3;
 
     @Resource
     AccountDispatchConfigMapper configMapper;
+
+    @Resource
+    AccountDispatchTimeMapper timeMapper;
 
     @Resource
     AccountScheduleCalculator calculator;
@@ -46,19 +56,17 @@ public class AccountDispatchConfigService {
         Objects.requireNonNull(account.getId(), "account.id");
         Objects.requireNonNull(now, "now");
         var mode = validatedMode(request);
+        var scheduleTimes = validatedTimes(request, mode);
 
         LocalDateTime nextScheduledAt = null;
         if (SCHEDULED.equals(mode)) {
-            if (request.getScheduleTime() == null) {
-                throw new IllegalArgumentException("scheduleTime is required for SCHEDULED mode");
-            }
-            nextScheduledAt = calculator.nextOccurrence(account, request.getScheduleTime(), now);
+            nextScheduledAt = calculator.nextOccurrence(account, scheduleTimes, now);
         }
 
         var config = new AccountDispatchConfigEntity()
                 .setAccountId(account.getId())
                 .setDispatchMode(mode)
-                .setScheduleTime(SCHEDULED.equals(mode) ? request.getScheduleTime() : null)
+                .setScheduleTime(firstOrNull(scheduleTimes))
                 .setNextScheduledAt(assignmentActive ? null : nextScheduledAt)
                 .setActivationPending(assignmentActive ? 1 : 0);
         var affectedRows = configMapper.upsert(config);
@@ -66,6 +74,7 @@ public class AccountDispatchConfigService {
                 || affectedRows == 0 && !sameConfiguration(config, configMapper.selectById(account.getId()))) {
             throw new IllegalStateException("Unable to persist account dispatch configuration");
         }
+        replaceTimes(account.getId(), scheduleTimes);
     }
 
     @Transactional
@@ -82,12 +91,13 @@ public class AccountDispatchConfigService {
         LocalTime scheduleTime = null;
         LocalDateTime nextScheduledAt = null;
         if (SCHEDULED.equals(mode)) {
-            if (config.getScheduleTime() == null) {
+            var scheduleTimes = persistedTimes(config);
+            if (scheduleTimes.isEmpty()) {
                 throw new IllegalStateException("Persisted SCHEDULED configuration has no scheduleTime");
             }
-            scheduleTime = config.getScheduleTime();
+            scheduleTime = scheduleTimes.get(0);
             try {
-                nextScheduledAt = calculator.nextOccurrence(account, scheduleTime, now);
+                nextScheduledAt = calculator.nextOccurrence(account, scheduleTimes, now);
             } catch (IllegalArgumentException exception) {
                 throw new IllegalStateException("Persisted dispatch configuration is invalid", exception);
             }
@@ -117,6 +127,82 @@ public class AccountDispatchConfigService {
         } catch (IllegalArgumentException exception) {
             throw new IllegalStateException("Persisted dispatch configuration is invalid", exception);
         }
+    }
+
+    public List<LocalTime> getScheduleTimes(AccountDispatchConfigEntity config) {
+        if (config == null || config.getAccountId() == null
+                || !SCHEDULED.equals(config.getDispatchMode())) {
+            return List.of();
+        }
+        return persistedTimes(config);
+    }
+
+    private List<LocalTime> validatedTimes(AccountDispatchConfigDTO request, String mode) {
+        if (!SCHEDULED.equals(mode)) {
+            return List.of();
+        }
+        var requested = request.getScheduleTimes() == null
+                ? new ArrayList<LocalTime>()
+                : new ArrayList<>(request.getScheduleTimes());
+        if (requested.isEmpty() && request.getScheduleTime() != null) {
+            requested.add(request.getScheduleTime());
+        }
+        if (requested.isEmpty()) {
+            throw new IllegalArgumentException("scheduleTimes is required for SCHEDULED mode");
+        }
+        if (requested.size() > MAX_SCHEDULE_TIMES) {
+            throw new IllegalArgumentException("scheduleTimes supports at most 3 values");
+        }
+        if (requested.stream().anyMatch(Objects::isNull)) {
+            throw new IllegalArgumentException("scheduleTimes cannot contain null");
+        }
+        var unique = new TreeSet<>(requested);
+        if (unique.size() != requested.size()) {
+            throw new IllegalArgumentException("scheduleTimes cannot contain duplicates");
+        }
+        var sorted = new ArrayList<>(unique);
+        if (request.getScheduleTime() != null
+                && !Objects.equals(request.getScheduleTime(), sorted.get(0))) {
+            throw new IllegalArgumentException("scheduleTime conflicts with scheduleTimes");
+        }
+        return sorted;
+    }
+
+    private List<LocalTime> persistedTimes(AccountDispatchConfigEntity config) {
+        var persisted = timeMapper.selectTimes(config.getAccountId());
+        if (persisted != null && !persisted.isEmpty()) {
+            return normalizedPersistedTimes(persisted);
+        }
+        return config.getScheduleTime() == null
+                ? List.of()
+                : List.of(config.getScheduleTime());
+    }
+
+    private List<LocalTime> normalizedPersistedTimes(Collection<LocalTime> times) {
+        if (times == null || times.isEmpty() || times.stream().anyMatch(Objects::isNull)) {
+            throw new IllegalStateException("Persisted dispatch configuration is invalid");
+        }
+        var unique = new TreeSet<>(times);
+        if (unique.size() != times.size() || unique.size() > MAX_SCHEDULE_TIMES) {
+            throw new IllegalStateException("Persisted dispatch configuration is invalid");
+        }
+        return new ArrayList<>(unique);
+    }
+
+    private void replaceTimes(Long accountId, List<LocalTime> scheduleTimes) {
+        timeMapper.deleteByAccountId(accountId);
+        for (var scheduleTime : scheduleTimes) {
+            var row = new AccountDispatchTimeEntity()
+                    .setAccountId(accountId)
+                    .setScheduleTime(scheduleTime);
+            if (timeMapper.insert(row) != 1) {
+                throw new IllegalStateException("Unable to persist account schedule time");
+            }
+        }
+    }
+
+    private LocalTime firstOrNull(List<LocalTime> scheduleTimes) {
+        return scheduleTimes.isEmpty() ? null : scheduleTimes.get(0);
     }
 
     private boolean sameConfiguration(AccountDispatchConfigEntity expected,

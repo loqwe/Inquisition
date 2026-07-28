@@ -10,16 +10,33 @@ import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZonedDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Component
 public class AccountScheduleCalculator {
 
     public LocalDateTime nextOccurrence(AccountEntity account, LocalTime time,
                                         LocalDateTime strictlyAfter) {
-        Objects.requireNonNull(account, "account");
         Objects.requireNonNull(time, "time");
+        return nextOccurrence(account, List.of(time), strictlyAfter);
+    }
+
+    public LocalDateTime nextOccurrence(AccountEntity account, Collection<LocalTime> times,
+                                        LocalDateTime strictlyAfter) {
+        Objects.requireNonNull(account, "account");
+        Objects.requireNonNull(times, "times");
         Objects.requireNonNull(strictlyAfter, "strictlyAfter");
+        var orderedTimes = times.stream()
+                .map(time -> Objects.requireNonNull(time, "schedule time"))
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+        if (orderedTimes.isEmpty()) {
+            throw new IllegalArgumentException("At least one schedule time is required");
+        }
         var active = account.getActive() == null ? new ActivationDate() : account.getActive();
         if (!hasEnabledWeekday(active)) {
             throw new IllegalArgumentException("At least one active weekday must be enabled");
@@ -31,9 +48,11 @@ public class AccountScheduleCalculator {
             if (!isEnabled(active, date.getDayOfWeek())) {
                 continue;
             }
-            var candidate = ZonedDateTime.of(date, time, GameDayClock.ZONE_ID);
-            if (candidate.isAfter(boundary)) {
-                return candidate.toLocalDateTime();
+            for (var time : orderedTimes) {
+                var candidate = ZonedDateTime.of(date, time, GameDayClock.ZONE_ID);
+                if (candidate.isAfter(boundary)) {
+                    return candidate.toLocalDateTime();
+                }
             }
         }
         throw new IllegalStateException("Unable to calculate the next enabled occurrence");

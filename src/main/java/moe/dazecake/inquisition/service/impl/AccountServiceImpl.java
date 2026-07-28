@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.google.gson.Gson;
 import moe.dazecake.inquisition.constant.enums.TaskType;
 import moe.dazecake.inquisition.mapper.AccountDispatchConfigMapper;
+import moe.dazecake.inquisition.mapper.AccountDispatchTimeMapper;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.mapper.AccountScheduledRunMapper;
 import moe.dazecake.inquisition.mapper.mapstruct.AccountConvert;
@@ -12,6 +13,7 @@ import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.account.AddAccountDTO;
 import moe.dazecake.inquisition.model.entity.AccountDispatchConfigEntity;
+import moe.dazecake.inquisition.model.entity.AccountDispatchTimeEntity;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AccountScheduledRunEntity;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
@@ -29,8 +31,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -71,6 +76,9 @@ public class AccountServiceImpl implements AccountService {
 
     @Resource
     AccountDispatchConfigMapper dispatchConfigMapper;
+
+    @Resource
+    AccountDispatchTimeMapper dispatchTimeMapper;
 
     @Resource
     AccountScheduledRunMapper scheduledRunMapper;
@@ -154,6 +162,7 @@ public class AccountServiceImpl implements AccountService {
             dynamicInfo.getUserSanInfoMap().remove(id);
             dynamicInfo.getFreezeUserInfoMap().remove(id);
             dynamicInfo.getCooldownReasonMap().remove(id);
+            dispatchTimeMapper.deleteByAccountId(id);
             dispatchConfigMapper.deleteById(id);
             accountMapper.hardDeleteById(id);
         }
@@ -207,6 +216,8 @@ public class AccountServiceImpl implements AccountService {
             effectiveRequest = new AccountDispatchConfigDTO();
             effectiveRequest.setDispatchMode(existingConfig.getDispatchMode());
             effectiveRequest.setScheduleTime(existingConfig.getScheduleTime());
+            effectiveRequest.setScheduleTimes(
+                    dispatchConfigService.getScheduleTimes(existingConfig));
         }
         if (effectiveRequest == null) {
             throw new IllegalArgumentException("dispatch configuration is required");
@@ -254,6 +265,7 @@ public class AccountServiceImpl implements AccountService {
         var request = new AccountDispatchConfigDTO();
         request.setDispatchMode(config.getDispatchMode());
         request.setScheduleTime(config.getScheduleTime());
+        request.setScheduleTimes(dispatchConfigService.getScheduleTimes(config));
         dispatchConfigService.update(account, request, false, now);
     }
 
@@ -551,6 +563,7 @@ public class AccountServiceImpl implements AccountService {
                 .map(AccountDispatchConfigEntity::getAccountId)
                 .collect(Collectors.toSet());
         var latestRuns = latestScheduledRuns(scheduledAccountIds);
+        var scheduleTimes = dispatchTimes(scheduledAccountIds);
 
         for (AccountEntity user : data.getRecords()) {
             hydrateConfigFromRawJson(user);
@@ -565,6 +578,7 @@ public class AccountServiceImpl implements AccountService {
             }
             accountWithSanVO.setTodayLoginCount(todayLoginCounts.getOrDefault(user.getId(), 0));
             hydrateDispatch(accountWithSanVO, dispatchConfigs.get(user.getId()),
+                    scheduleTimes.get(user.getId()),
                     latestRuns.get(user.getId()));
             result.getRecords().add(accountWithSanVO);
         }
@@ -597,18 +611,40 @@ public class AccountServiceImpl implements AccountService {
                         Function.identity(), (left, right) -> left));
     }
 
+    private Map<Long, List<LocalTime>> dispatchTimes(Set<Long> accountIds) {
+        if (accountIds.isEmpty()) {
+            return Map.of();
+        }
+        var rows = dispatchTimeMapper.selectByAccountIds(accountIds);
+        if (rows == null || rows.isEmpty()) {
+            return Map.of();
+        }
+        var result = new HashMap<Long, List<LocalTime>>();
+        rows.stream().filter(Objects::nonNull)
+                .filter(row -> row.getAccountId() != null && row.getScheduleTime() != null)
+                .forEach(row -> result.computeIfAbsent(row.getAccountId(), ignored -> new ArrayList<>())
+                        .add(row.getScheduleTime()));
+        result.values().forEach(times -> times.sort(LocalTime::compareTo));
+        return result;
+    }
+
     private void hydrateDispatch(AccountWithSanVO target, AccountDispatchConfigEntity config,
+                                 List<LocalTime> persistedTimes,
                                  AccountScheduledRunEntity latestRun) {
         if (config == null) {
             target.setDispatchMode(AccountDispatchConfigService.AUTO);
             return;
         }
         target.setDispatchMode(config.getDispatchMode());
-        target.setScheduleTime(config.getScheduleTime());
         target.setNextScheduledAt(config.getNextScheduledAt());
         if (!AccountDispatchConfigService.SCHEDULED.equals(config.getDispatchMode())) {
             return;
         }
+        var scheduleTimes = persistedTimes == null || persistedTimes.isEmpty()
+                ? config.getScheduleTime() == null ? List.<LocalTime>of() : List.of(config.getScheduleTime())
+                : new ArrayList<>(persistedTimes);
+        target.setScheduleTimes(scheduleTimes);
+        target.setScheduleTime(scheduleTimes.isEmpty() ? null : scheduleTimes.get(0));
         if (latestRun == null) {
             target.setScheduleStatus("NOT_RUN");
             return;

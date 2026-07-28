@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,10 +25,12 @@ import static org.mockito.Mockito.when;
 class AccountScheduledDispatchProcessorTest {
 
     @Test
-    void sameGameDayDueCreatesOneWaitingRunAndClearsTheDueTime() {
+    void sameGameDayDueCreatesOneWaitingRunAndAdvancesToTheNextConfiguredTime() {
         var processor = processor();
         var now = LocalDateTime.of(2026, 7, 28, 20, 0);
         var dueAt = now.minusMinutes(30);
+        var next = LocalDateTime.of(2026, 7, 29, 8, 0);
+        var times = List.of(LocalTime.of(8, 0), LocalTime.of(14, 0), LocalTime.of(19, 30));
         var config = dueConfig(7L, dueAt);
         var account = validAccount(7L, now);
         var created = run(41L, 7L, dueAt);
@@ -35,13 +38,15 @@ class AccountScheduledDispatchProcessorTest {
         when(processor.runService.findActiveByAccount(7L)).thenReturn(Optional.empty());
         when(processor.calculator.belongsToCurrentGameDay(dueAt, now)).thenReturn(true);
         when(processor.runService.createWaiting(7L, dueAt)).thenReturn(created);
-        when(processor.configMapper.clearDue(7L, dueAt)).thenReturn(1);
+        when(processor.configService.getScheduleTimes(config)).thenReturn(times);
+        when(processor.calculator.nextOccurrence(account, times, dueAt)).thenReturn(next);
+        when(processor.configMapper.advanceDue(7L, dueAt, next)).thenReturn(1);
 
         processor.process(7L, now);
 
         verify(processor.configMapper).selectByIdForUpdate(7L);
         verify(processor.runService).createWaiting(7L, dueAt);
-        verify(processor.configMapper).clearDue(7L, dueAt);
+        verify(processor.configMapper).advanceDue(7L, dueAt, next);
     }
 
     @Test
@@ -52,9 +57,11 @@ class AccountScheduledDispatchProcessorTest {
         var next = LocalDateTime.of(2026, 7, 29, 19, 30);
         var config = dueConfig(7L, dueAt);
         var account = validAccount(7L, now);
+        var times = List.of(LocalTime.of(8, 0), LocalTime.of(19, 30));
         stubLocked(processor, config, account);
         when(processor.runService.findActiveByAccount(7L)).thenReturn(Optional.empty());
-        when(processor.calculator.nextOccurrence(account, config.getScheduleTime(), now)).thenReturn(next);
+        when(processor.configService.getScheduleTimes(config)).thenReturn(times);
+        when(processor.calculator.nextOccurrence(account, times, now)).thenReturn(next);
         when(processor.configMapper.advanceDue(7L, dueAt, next)).thenReturn(1);
 
         processor.process(7L, now);
@@ -64,7 +71,7 @@ class AccountScheduledDispatchProcessorTest {
     }
 
     @Test
-    void activeRunSuppressesASecondInstanceAcrossGameDays() {
+    void activeRunPreservesTheOverduePointerForLaterProcessing() {
         var processor = processor();
         var now = LocalDateTime.of(2026, 7, 29, 4, 5);
         var dueAt = LocalDateTime.of(2026, 7, 28, 19, 30);
@@ -72,12 +79,12 @@ class AccountScheduledDispatchProcessorTest {
         stubLocked(processor, config, validAccount(7L, now));
         when(processor.runService.findActiveByAccount(7L))
                 .thenReturn(Optional.of(run(41L, 7L, dueAt)));
-        when(processor.configMapper.clearDue(7L, dueAt)).thenReturn(1);
 
         processor.process(7L, now);
 
         verify(processor.runService, never()).createWaiting(any(), any());
-        verify(processor.configMapper).clearDue(7L, dueAt);
+        verify(processor.configMapper, never()).clearDue(any(), any());
+        verify(processor.configMapper, never()).advanceDue(any(), any(), any());
     }
 
     @Test
@@ -115,6 +122,7 @@ class AccountScheduledDispatchProcessorTest {
         processor.configMapper = mock(AccountDispatchConfigMapper.class);
         processor.accountMapper = mock(AccountMapper.class);
         processor.runService = mock(AccountScheduledRunService.class);
+        processor.configService = mock(AccountDispatchConfigService.class);
         processor.calculator = mock(AccountScheduleCalculator.class);
         return processor;
     }

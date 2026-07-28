@@ -25,6 +25,9 @@ public class AccountScheduledDispatchProcessor {
     AccountScheduledRunService runService;
 
     @Resource
+    AccountDispatchConfigService configService;
+
+    @Resource
     AccountScheduleCalculator calculator;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -49,7 +52,6 @@ public class AccountScheduledDispatchProcessor {
 
         var active = runService.findActiveByAccount(accountId);
         if (active.isPresent()) {
-            clearDue(config, dueAt);
             return;
         }
         if (!calculator.belongsToCurrentGameDay(dueAt, now)) {
@@ -58,7 +60,7 @@ public class AccountScheduledDispatchProcessor {
         }
 
         runService.createWaiting(accountId, dueAt);
-        clearDue(config, dueAt);
+        advanceDue(config, account, dueAt, dueAt);
     }
 
     private boolean isStillDue(AccountDispatchConfigEntity config, LocalDateTime now) {
@@ -83,12 +85,13 @@ public class AccountScheduledDispatchProcessor {
     }
 
     private void advanceDue(AccountDispatchConfigEntity config, AccountEntity account,
-                            LocalDateTime dueAt, LocalDateTime now) {
-        if (config.getScheduleTime() == null) {
+                            LocalDateTime dueAt, LocalDateTime strictlyAfter) {
+        var scheduleTimes = configService.getScheduleTimes(config);
+        if (scheduleTimes.isEmpty()) {
             throw new IllegalStateException("Persisted SCHEDULED configuration has no scheduleTime");
         }
-        var next = calculator.nextOccurrence(account, config.getScheduleTime(), now);
-        if (next == null || !next.isAfter(now)) {
+        var next = calculator.nextOccurrence(account, scheduleTimes, strictlyAfter);
+        if (next == null || !next.isAfter(strictlyAfter)) {
             throw new IllegalStateException("Next account schedule must be strictly in the future");
         }
         if (configMapper.advanceDue(config.getAccountId(), dueAt, next) != 1) {

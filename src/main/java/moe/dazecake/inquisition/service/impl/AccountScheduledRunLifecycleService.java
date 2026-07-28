@@ -28,9 +28,6 @@ public class AccountScheduledRunLifecycleService {
     @Resource
     AccountMapper accountMapper;
 
-    @Resource
-    AccountScheduleCalculator calculator;
-
     @Transactional
     public void start(DispatchIntent intent) {
         if (intent == null || !DispatchIntent.SOURCE_SCHEDULED.equals(intent.getSource())) {
@@ -131,22 +128,6 @@ public class AccountScheduledRunLifecycleService {
     private void advanceOrActivate(AccountDispatchConfigEntity config, LocalDateTime now) {
         if (Integer.valueOf(1).equals(config.getActivationPending())) {
             activatePending(config.getAccountId(), now);
-            return;
-        }
-        if (!AccountDispatchConfigService.SCHEDULED.equals(config.getDispatchMode())) {
-            return;
-        }
-        if (config.getScheduleTime() == null) {
-            throw new IllegalStateException("Persisted SCHEDULED configuration has no scheduleTime");
-        }
-        var account = accountMapper.selectById(config.getAccountId());
-        if (!isSchedulable(account, now)) {
-            return;
-        }
-        var next = calculator.nextOccurrence(account, config.getScheduleTime(), now);
-        if (next == null || !next.isAfter(now)
-                || configMapper.scheduleNext(config.getAccountId(), next) != 1) {
-            throw new IllegalStateException("Unable to schedule the next account run");
         }
     }
 
@@ -158,12 +139,4 @@ public class AccountScheduledRunLifecycleService {
         configService.activatePending(account, now);
     }
 
-    private boolean isSchedulable(AccountEntity account, LocalDateTime now) {
-        return account != null
-                && "daily".equals(account.getTaskType())
-                && Integer.valueOf(0).equals(account.getDelete())
-                && Integer.valueOf(0).equals(account.getFreeze())
-                && account.getExpireTime() != null
-                && account.getExpireTime().isAfter(now);
-    }
 }

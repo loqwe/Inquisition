@@ -92,7 +92,7 @@ public class AccountController {
                 if (dispatchNode == null || !dispatchNode.isObject()) {
                     return Result.paramError("dispatchConfig格式错误");
                 }
-                var allowedFields = Set.of("dispatchMode", "scheduleTime");
+                var allowedFields = Set.of("dispatchMode", "scheduleTime", "scheduleTimes");
                 var fieldNames = dispatchNode.fieldNames();
                 while (fieldNames.hasNext()) {
                     if (!allowedFields.contains(fieldNames.next())) {

@@ -15,6 +15,7 @@ public interface AccountConvert {
     @Mapping(target = "todayLoginCount", ignore = true)
     @Mapping(target = "dispatchMode", ignore = true)
     @Mapping(target = "scheduleTime", ignore = true)
+    @Mapping(target = "scheduleTimes", ignore = true)
     @Mapping(target = "nextScheduledAt", ignore = true)
     @Mapping(target = "scheduleStatus", ignore = true)
     AccountWithSanVO toAccountWithSanVO(AccountEntity accountEntity, String san);
