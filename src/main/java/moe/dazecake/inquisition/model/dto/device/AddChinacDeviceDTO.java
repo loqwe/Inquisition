@@ -8,6 +8,8 @@ import java.time.LocalDateTime;
 public class AddChinacDeviceDTO {
     private String deviceName;
 
+    private String deviceRole;
+
     private String deviceToken;
 
     private Integer chinac;

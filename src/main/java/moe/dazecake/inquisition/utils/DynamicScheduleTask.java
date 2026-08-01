@@ -262,6 +262,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                         String time = format.format(new Date().getTime());
                         deviceMapper.insert(new DeviceEntity()
                                 .setDeviceName("审判庭_" + time)
+                                .setDeviceRole(ImportantDevicePolicy.BACKUP)
                                 .setRegion("")
                                 .setDeviceToken(newDevice.get(0))
                                 .setDelete(0)

@@ -138,6 +138,7 @@ public class RunScript implements ApplicationRunner {
                         Instant instant = Instant.ofEpochMilli(chinacPhone.getDueTime());
                         var zone = GameDayClock.ZONE_ID;
                         newDevice.setDeviceName(chinacPhone.getName())
+                                .setDeviceRole(ImportantDevicePolicy.BACKUP)
                                 .setDeviceToken(chinacPhone.getId())
                                 .setRegion(chinacPhone.getRegion())
                                 .setExpireTime(LocalDateTime.ofInstant(instant, zone))

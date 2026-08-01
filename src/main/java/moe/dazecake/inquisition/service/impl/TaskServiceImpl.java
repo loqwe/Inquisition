@@ -24,6 +24,7 @@ import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.GameDayClock;
+import moe.dazecake.inquisition.utils.ImportantDevicePolicy;
 import moe.dazecake.inquisition.utils.Result;
 import moe.dazecake.inquisition.utils.TimeUtil;
 import org.springframework.beans.factory.annotation.Value;
@@ -234,6 +235,10 @@ public class TaskServiceImpl implements TaskService {
             taskAssignmentService.closeAssignment(existingAssignment, "INVALID", "account no longer exists", false);
         }
 
+        if (ImportantDevicePolicy.isBackup(device) && hasOnlineImportantDevice(deviceToken)) {
+            return Result.success("重点设备在线，备用设备待命");
+        }
+
         var urgentByAccount = promoteReadyUrgentTasks(now);
 
         //任务上锁
@@ -439,6 +444,16 @@ public class TaskServiceImpl implements TaskService {
         }
 
         return Result.success("success");
+    }
+
+    private boolean hasOnlineImportantDevice(String excludedToken) {
+        return deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
+                        .eq(DeviceEntity::getDelete, 0))
+                .stream()
+                .filter(ImportantDevicePolicy::includes)
+                .filter(device -> !Objects.equals(device.getDeviceToken(), excludedToken))
+                .anyMatch(device -> dynamicInfo.getDeviceStatusMap()
+                        .getOrDefault(device.getDeviceToken(), 0) != 0);
     }
 
     @Override

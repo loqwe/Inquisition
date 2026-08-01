@@ -8,5 +8,7 @@ import java.time.LocalDateTime;
 public class AddCommonDeviceDTO {
     private String deviceName;
 
+    private String deviceRole;
+
     private LocalDateTime expireTime;
 }

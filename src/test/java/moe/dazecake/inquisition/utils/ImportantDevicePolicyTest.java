@@ -21,6 +21,16 @@ class ImportantDevicePolicyTest {
         assertFalse(ImportantDevicePolicy.includes(null));
     }
 
+    @Test
+    void explicitBackupRoleSuppressesFaultNotificationsEvenForLegacyImportantName() {
+        assertFalse(ImportantDevicePolicy.includes(device("A").setDeviceRole(ImportantDevicePolicy.BACKUP)));
+    }
+
+    @Test
+    void explicitImportantRoleKeepsADeviceInTheImportantGroup() {
+        assertTrue(ImportantDevicePolicy.includes(device("备用").setDeviceRole(ImportantDevicePolicy.IMPORTANT)));
+    }
+
     private DeviceEntity device(String name) {
         return new DeviceEntity().setDeviceName(name);
     }

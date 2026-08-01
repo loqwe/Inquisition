@@ -17,6 +17,7 @@ import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.DeviceService;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.ImportantDevicePolicy;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.stereotype.Service;
 
@@ -39,7 +40,9 @@ public class DeviceServiceImpl implements DeviceService {
 
     @Override
     public void addDevice(AddDeviceDTO addDeviceDTO) {
-        deviceMapper.insert(DeviceConvert.INSTANCE.toDeviceEntity(addDeviceDTO));
+        var device = DeviceConvert.INSTANCE.toDeviceEntity(addDeviceDTO);
+        device.setDeviceRole(ImportantDevicePolicy.normalizeNew(addDeviceDTO.getDeviceRole()));
+        deviceMapper.insert(device);
         dynamicInfo.getDeviceStatusMap().put(addDeviceDTO.getDeviceToken(), 0);
     }
 
@@ -92,6 +95,11 @@ public class DeviceServiceImpl implements DeviceService {
             if (device.getChinac() == null) {
                 device.setChinac(0);
             }
+            var deviceRole = ImportantDevicePolicy.normalize(device.getDeviceRole());
+            if (deviceRole == null) {
+                deviceRole = ImportantDevicePolicy.includes(device)
+                        ? ImportantDevicePolicy.IMPORTANT : ImportantDevicePolicy.BACKUP;
+            }
             var loadDevice = new LoadDevice();
             loadDevice.setId(device.getId());
             loadDevice.setDeviceName(device.getDeviceName());
@@ -101,8 +109,14 @@ public class DeviceServiceImpl implements DeviceService {
             loadDevice.setRegion(device.getRegion());
             loadDevice.setExpireTime(device.getExpireTime());
             loadDevice.setDelete(device.getDelete());
+            loadDevice.setDeviceRole(deviceRole);
             loadDevice.setStatus(dynamicInfo.getDeviceStatusMap().get(device.getDeviceToken()));
             result.getLoadDeviceList().add(loadDevice);
+            if (ImportantDevicePolicy.BACKUP.equals(deviceRole)) {
+                result.getBackupDeviceList().add(loadDevice);
+            } else {
+                result.getImportantDeviceList().add(loadDevice);
+            }
         }
         return result;
     }
@@ -111,8 +125,17 @@ public class DeviceServiceImpl implements DeviceService {
     public void updateDevice(UpdateDeviceDTO updateDeviceDTO) {
         var deviceEntity = deviceMapper.selectById(updateDeviceDTO.getId());
         if (deviceEntity != null) {
-            deviceEntity = DeviceConvert.INSTANCE.toDeviceEntity(updateDeviceDTO);
-            deviceMapper.updateById(deviceEntity);
+            var updatedDevice = DeviceConvert.INSTANCE.toDeviceEntity(updateDeviceDTO);
+            var role = ImportantDevicePolicy.normalize(updateDeviceDTO.getDeviceRole());
+            if (role == null) {
+                role = ImportantDevicePolicy.normalize(deviceEntity.getDeviceRole());
+            }
+            if (role == null) {
+                role = ImportantDevicePolicy.includes(deviceEntity)
+                        ? ImportantDevicePolicy.IMPORTANT : ImportantDevicePolicy.BACKUP;
+            }
+            updatedDevice.setDeviceRole(role);
+            deviceMapper.updateById(updatedDevice);
         }
     }
 
