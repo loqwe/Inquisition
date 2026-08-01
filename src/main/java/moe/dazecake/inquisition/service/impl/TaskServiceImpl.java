@@ -15,6 +15,7 @@ import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.service.intf.TaskService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
+import moe.dazecake.inquisition.utils.DeviceRolePolicy;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.Result;
 import moe.dazecake.inquisition.utils.TimeUtil;
@@ -140,6 +141,10 @@ public class TaskServiceImpl implements TaskService {
             }
         }
 
+        if (DeviceRolePolicy.isBackup(device) && hasOnlineImportantDevice(deviceToken)) {
+            return Result.success("重点设备在线，备用设备待命");
+        }
+
         //任务上锁
         if (!dynamicInfo.getWaitUserList().isEmpty()) {
             var account = new AccountEntity();
@@ -234,6 +239,16 @@ public class TaskServiceImpl implements TaskService {
         } else {
             return Result.success("待分配队列为空");
         }
+    }
+
+    private boolean hasOnlineImportantDevice(String excludedToken) {
+        return deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
+                        .eq(DeviceEntity::getDelete, 0))
+                .stream()
+                .filter(DeviceRolePolicy::isImportant)
+                .filter(device -> !Objects.equals(device.getDeviceToken(), excludedToken))
+                .anyMatch(device -> dynamicInfo.getDeviceStatusMap()
+                        .getOrDefault(device.getDeviceToken(), 0) != 0);
     }
 
     @Override

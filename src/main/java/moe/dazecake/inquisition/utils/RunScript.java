@@ -99,6 +99,7 @@ public class RunScript implements ApplicationRunner {
                         Instant instant = Instant.ofEpochMilli(chinacPhone.getDueTime());
                         ZoneId zone = ZoneId.systemDefault();
                         newDevice.setDeviceName(chinacPhone.getName())
+                                .setDeviceRole(DeviceRolePolicy.BACKUP)
                                 .setDeviceToken(chinacPhone.getId())
                                 .setRegion(chinacPhone.getRegion())
                                 .setExpireTime(LocalDateTime.ofInstant(instant, zone))

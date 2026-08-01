@@ -129,14 +129,19 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                                             .eq(DeviceEntity::getDeviceToken, token)
                             );
 
+                            if (device == null) {
+                                continue;
+                            }
+
                             //记录日志
                             logService.logWarn("设备离线", "设备名称: " + device.getDeviceName() + "\n" +
                                     "设备token: " + device.getDeviceToken() + "\n");
 
-                            //邮件通知
-                            messageService.pushAdmin("[审判庭] 设备离线", "设备名称: " + device.getDeviceName() + "\n"
-                                    + "设备token: " + device.getDeviceToken() + "\n"
-                                    + "时间: " + LocalDateTime.now() + "\n");
+                            if (DeviceRolePolicy.isImportant(device)) {
+                                messageService.pushAdmin("[审判庭] 设备离线", "设备名称: " + device.getDeviceName() + "\n"
+                                        + "设备token: " + device.getDeviceToken() + "\n"
+                                        + "时间: " + LocalDateTime.now() + "\n");
+                            }
 
                         } else if (num == 86400) {
                             //超时24h，移除设备
@@ -147,6 +152,9 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                                     Wrappers.<DeviceEntity>lambdaQuery()
                                             .eq(DeviceEntity::getDeviceToken, token)
                             );
+                            if (device == null) {
+                                continue;
+                            }
                             device.setDelete(1);
                             deviceMapper.updateById(device);
 
@@ -154,10 +162,11 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                             logService.logWarn("设备移除", "设备名称: " + device.getDeviceName() + "\n" +
                                     "设备token: " + device.getDeviceToken() + "\n");
 
-                            //邮件通知
-                            messageService.pushAdmin("[审判庭] 设备移除", "设备名称: " + device.getDeviceName() + "\n"
-                                    + "设备token: " + device.getDeviceToken() + "\n"
-                                    + "时间: " + LocalDateTime.now() + "\n");
+                            if (DeviceRolePolicy.isImportant(device)) {
+                                messageService.pushAdmin("[审判庭] 设备移除", "设备名称: " + device.getDeviceName() + "\n"
+                                        + "设备token: " + device.getDeviceToken() + "\n"
+                                        + "时间: " + LocalDateTime.now() + "\n");
+                            }
                         }
                     }
                 },
@@ -279,6 +288,7 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
                         String time = format.format(new Date().getTime());
                         deviceMapper.insert(new DeviceEntity()
                                 .setDeviceName("审判庭_" + time)
+                                .setDeviceRole(DeviceRolePolicy.BACKUP)
                                 .setRegion("")
                                 .setDeviceToken(newDevice.get(0))
                                 .setDelete(0)
@@ -372,7 +382,8 @@ public class DynamicScheduleTask implements SchedulingConfigurer {
 
         var offlineDevices = new ArrayList<>(deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
                 .eq(DeviceEntity::getDelete, 0)));
-        offlineDevices.removeIf(device -> !isRecentlyOfflineDevice(device, now));
+        offlineDevices.removeIf(device -> !DeviceRolePolicy.isImportant(device)
+                || !isRecentlyOfflineDevice(device, now));
 
         var frozenAccounts = new ArrayList<>(accountMapper.selectList(Wrappers.<AccountEntity>lambdaQuery()
                 .gt(AccountEntity::getExpireTime, now)

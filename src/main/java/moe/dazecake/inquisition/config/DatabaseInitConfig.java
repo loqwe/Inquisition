@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Arrays;
 
@@ -74,7 +75,32 @@ public class DatabaseInitConfig {
                 "PRAGMA foreign_keys = ON",
                 "PRAGMA journal_mode = WAL"
         ));
+        ensureSqliteDeviceRoleColumn();
         log.info("【审判庭初始化】 SQLite 数据库已启用: " + datasourceUrl);
+    }
+
+    private void ensureSqliteDeviceRoleColumn() throws Exception {
+        try (Connection connection = DriverManager.getConnection(datasourceUrl);
+             Statement statement = connection.createStatement()) {
+            try (ResultSet tables = connection.getMetaData().getTables(null, null, "device", null)) {
+                if (!tables.next()) {
+                    return;
+                }
+            }
+
+            boolean hasRole;
+            try (ResultSet columns = connection.getMetaData().getColumns(null, null, "device", "device_role")) {
+                hasRole = columns.next();
+            }
+            if (!hasRole) {
+                statement.executeUpdate("ALTER TABLE device ADD COLUMN device_role TEXT DEFAULT 'BACKUP'");
+                log.info("【审判庭初始化】 已为设备表补充分组字段，现有启用设备归入重点设备");
+            }
+            statement.executeUpdate("UPDATE device SET device_role = 'IMPORTANT' "
+                    + "WHERE `delete` = 0 AND (device_role IS NULL OR trim(device_role) = '')");
+            statement.executeUpdate("UPDATE device SET device_role = 'BACKUP' "
+                    + "WHERE `delete` = 1 AND (device_role IS NULL OR trim(device_role) = '')");
+        }
     }
 
     private void createMysqlDatabaseIfMissing() throws Exception {

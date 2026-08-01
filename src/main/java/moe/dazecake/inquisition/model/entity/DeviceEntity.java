@@ -39,6 +39,10 @@ public class DeviceEntity {
     @Schema(description = "设备名称")
     String deviceName;
 
+    @Column(name = "device_role", comment = "设备分组")
+    @Schema(description = "设备分组：IMPORTANT重点设备，BACKUP备用设备")
+    String deviceRole;
+
     @Column(name = "device_token", comment = "设备token")
     @Schema(description = "设备token")
     String deviceToken;

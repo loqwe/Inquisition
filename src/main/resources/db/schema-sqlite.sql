@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS account (
 CREATE TABLE IF NOT EXISTS device (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_name TEXT,
+    device_role TEXT DEFAULT 'BACKUP',
     device_token TEXT,
     work_scope TEXT,
     chinac INTEGER,

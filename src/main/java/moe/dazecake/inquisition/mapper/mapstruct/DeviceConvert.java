@@ -16,7 +16,8 @@ public interface DeviceConvert {
     DeviceConvert INSTANCE = Mappers.getMapper(DeviceConvert.class);
 
     @Mappings({
-            @Mapping(target = "delete", defaultValue = "0")
+            @Mapping(target = "delete", defaultValue = "0"),
+            @Mapping(target = "deviceRole", defaultValue = "BACKUP")
     })
     DeviceEntity toDeviceEntity(AddDeviceDTO addDeviceDTO);
 
@@ -27,6 +28,7 @@ public interface DeviceConvert {
             @Mapping(target = "chinac", constant = "0"),
             @Mapping(target = "region", expression = "java(null)"),
             @Mapping(target = "delete", constant = "0"),
+            @Mapping(target = "deviceRole", defaultValue = "BACKUP"),
             @Mapping(target = "deviceToken", expression = "java(org.apache.commons.lang3.RandomStringUtils.randomAlphabetic(16))"),
             @Mapping(target = "workScope",expression = "java(new ArrayList<>())"),
     })
@@ -35,6 +37,7 @@ public interface DeviceConvert {
     @Mappings({
             @Mapping(target = "id", constant = "0L"),
             @Mapping(target = "delete", constant = "0"),
+            @Mapping(target = "deviceRole", defaultValue = "BACKUP"),
             @Mapping(target = "workScope",expression = "java(new ArrayList<>())"),
     })
     AddDeviceDTO toAddDeviceDTO(AddChinacDeviceDTO addChinacDeviceDTO);
