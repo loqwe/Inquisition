@@ -47,8 +47,8 @@ class DispatchQueueServiceTest {
         assertTrue(service.enqueueManual(3L));
         assertTrue(service.enqueueScheduled(firstScheduled));
         assertTrue(service.enqueueScheduled(secondScheduled));
-        assertTrue(service.enqueueUrgent(6L));
-        assertTrue(service.enqueueUrgent(7L));
+        assertTrue(service.enqueueUrgent(6L, NOW));
+        assertTrue(service.enqueueUrgent(7L, NOW));
 
         assertEquals(List.of(6L, 7L, 3L, 4L, 5L, 1L, 2L),
                 service.dynamicInfo.getWaitUserList());
