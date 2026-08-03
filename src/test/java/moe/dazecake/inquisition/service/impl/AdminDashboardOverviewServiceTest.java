@@ -61,9 +61,9 @@ class AdminDashboardOverviewServiceTest {
                 .setRunningTasks(List.of(running));
         when(service.taskBoardService.getReadOnlySnapshot(now)).thenReturn(board);
         when(service.deviceRuntimeProjectionService.project(now, board.getRunningTasks())).thenReturn(List.of(
-                device(1L, "设备A", "token-a", DeviceRuntimeProjectionService.BUSY, now),
-                device(2L, "设备B", "token-b", DeviceRuntimeProjectionService.IDLE, now),
-                device(3L, "设备C", "token-c", DeviceRuntimeProjectionService.SUSPENDED, now)));
+                device(1L, "设备A", "token-a", DeviceRuntimeProjectionService.BUSY, now, "IMPORTANT"),
+                device(2L, "设备B", "token-b", DeviceRuntimeProjectionService.IDLE, now, "IMPORTANT"),
+                device(3L, "设备C", "token-c", DeviceRuntimeProjectionService.SUSPENDED, now, "BACKUP")));
         var failedTask = new ScheduledTaskStatusVO("daily-login", "每日补登", "", "", "Asia/Shanghai",
                 "", "FAILED", true, "FAILED", "CRON", now.minusHours(1), now.minusMinutes(59),
                 now.minusDays(1), now.minusMinutes(59), now.plusHours(1), 1000L, 1, 10,
@@ -79,7 +79,12 @@ class AdminDashboardOverviewServiceTest {
         assertEquals(2L, overview.getAccounts().getMissingLogin());
         assertEquals(1, overview.getTasks().getLongRunning());
         assertEquals("WARNING", overview.getOverallStatus());
-        assertEquals(3, overview.getDevices().getOnline());
+        assertEquals(2, overview.getDevices().getOnline());
+        assertEquals(2, overview.getDevices().getTotal());
+        assertTrue(overview.getDevices().getItems().stream()
+                .noneMatch(item -> "设备C".equals(item.getName())));
+        assertTrue(overview.getAlerts().stream()
+                .noneMatch(alert -> alert.getTitle() != null && alert.getTitle().contains("设备C")));
         assertTrue(overview.getDevices().getItems().stream()
                 .allMatch(item -> item.getTokenSuffix().length() <= 4));
         assertTrue(overview.getTasks().getRunningItems().stream()
@@ -132,9 +137,10 @@ class AdminDashboardOverviewServiceTest {
     }
 
     private static DeviceRuntimeProjection device(Long id, String name, String token, String state,
-                                                   LocalDateTime now) {
+                                                   LocalDateTime now, String role) {
         return new DeviceRuntimeProjection()
-                .setDevice(new DeviceEntity().setId(id).setDeviceName(name).setDeviceToken(token).setDelete(0))
+                .setDevice(new DeviceEntity().setId(id).setDeviceName(name).setDeviceToken(token)
+                        .setDeviceRole(role).setDelete(0))
                 .setRuntimeState(state).setLastHeartbeatAt(now.minusMinutes(1));
     }
 }

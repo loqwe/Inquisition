@@ -13,6 +13,7 @@ import moe.dazecake.inquisition.model.vo.task.ScheduledTaskOverviewVO;
 import moe.dazecake.inquisition.model.vo.task.ScheduledTaskStatusVO;
 import moe.dazecake.inquisition.model.vo.task.TaskBoardVO;
 import moe.dazecake.inquisition.utils.GameDayClock;
+import moe.dazecake.inquisition.utils.ImportantDevicePolicy;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -77,6 +78,10 @@ public class AdminDashboardOverviewService {
         if (deviceProjections == null) {
             deviceProjections = List.of();
         }
+        deviceProjections = deviceProjections.stream()
+                .filter(projection -> projection != null
+                        && ImportantDevicePolicy.includes(projection.getDevice()))
+                .collect(Collectors.toList());
         var scheduledOverview = scheduledTaskMonitorService.getOverview(now);
 
         var accounts = accounts(accountMetrics, missingPage, board);
