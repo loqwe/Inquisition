@@ -492,7 +492,7 @@ public class TaskServiceImpl implements TaskService {
             var suspendedUntil = failureAt.plusHours(1);
             dynamicInfo.getFreezeUserInfoMap().put(account.getId(), suspendedUntil);
             dynamicInfo.getCooldownReasonMap().put(account.getId(), "deviceRepeatedFailure");
-            messageService.push(account, "设备异常",
+            messageService.push(account, "任务保护",
                     "当前设备连续任务失败，已暂停1小时并重新排队；系统会自动换用其他可用设备。");
         }
 

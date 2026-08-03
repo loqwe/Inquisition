@@ -278,7 +278,7 @@ class TaskServiceImplTest {
         var until = service.dynamicInfo.getFreezeUserInfoMap().get(398L);
         assertTrue(until != null && !until.isBefore(before.plusMinutes(59)));
         assertEquals("deviceRepeatedFailure", service.dynamicInfo.getCooldownReasonMap().get(398L));
-        verify(service.messageService).push(any(AccountEntity.class), eq("设备异常"), contains("暂停1小时"));
+        verify(service.messageService).push(any(AccountEntity.class), eq("任务保护"), contains("暂停1小时"));
     }
 
     @Test

@@ -99,7 +99,7 @@ class DeviceRuntimeServiceTest {
     }
 
     @Test
-    void offlineHeartbeatDoesNotMarkDeviceOnline() {
+    void zeroStatusHeartbeatStillProvesTransportLiveness() {
         var service = new DeviceRuntimeService();
         service.runtimeMapper = mock(DeviceRuntimeMapper.class);
         service.deviceMapper = mock(DeviceMapper.class);
@@ -117,10 +117,11 @@ class DeviceRuntimeServiceTest {
 
         assertFalse(service.recordHeartbeat("device-1", 0, null, "1.0", now));
 
-        assertEquals("OFFLINE", runtime.getState());
+        assertEquals("ONLINE", runtime.getState());
         assertEquals(0, service.dynamicInfo.getDeviceStatusMap().get("device-1"));
+        assertTrue(service.hasFreshHeartbeat("device-1", now));
         verify(service.runtimeMapper).updateById(runtime);
-        verify(service.taskRecoveryService).recoverDeviceOffline("device-1", now);
+        verify(service.taskRecoveryService, never()).recoverDeviceOffline(any(), any());
     }
 
     @Test
@@ -359,7 +360,29 @@ class DeviceRuntimeServiceTest {
         assertTrue(!service.recordTaskFailure("device-1", now.plusMinutes(1)));
 
         assertEquals(now.plusHours(1), runtime.getSuspendedUntil());
-        verify(service.messageService, times(1)).pushAdmin(contains("[审判庭重点设备] 设备异常"), contains("A"));
+        verify(service.messageService, times(1)).pushAdmin(contains("[审判庭重点设备] 设备任务连续失败"),
+                contains("30分钟未收到心跳"));
+    }
+
+    @Test
+    void freshHeartbeatSuppressesTheDeviceFailureAdminAlert() {
+        var service = new DeviceRuntimeService();
+        service.runtimeMapper = mock(DeviceRuntimeMapper.class);
+        service.deviceMapper = mock(DeviceMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.messageService = mock(MessageServiceImpl.class);
+        var now = LocalDateTime.of(2026, 7, 19, 13, 0);
+        var runtime = new DeviceRuntimeEntity().setDeviceToken("device-1")
+                .setState("ONLINE").setLastHeartbeatAt(now.minusSeconds(1))
+                .setConsecutiveFailures(2).setLastFailureNoticeCount(0);
+        var device = new DeviceEntity().setDeviceToken("device-1").setDeviceName("A");
+        when(service.runtimeMapper.selectById("device-1")).thenReturn(runtime);
+        when(service.deviceMapper.selectOne(any())).thenReturn(device);
+
+        assertTrue(service.recordTaskFailure("device-1", now));
+
+        assertEquals(now.plusHours(1), runtime.getSuspendedUntil());
+        verify(service.messageService, never()).pushAdmin(any(), any());
     }
 
     @Test

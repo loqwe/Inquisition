@@ -73,7 +73,6 @@ public class DeviceRuntimeService {
             // Startup may have seeded an offline row while this request was being accepted.
             runtime = runtimeMapper.selectById(deviceToken);
             var exists = runtime != null;
-            var wasOnline = runtime != null && "ONLINE".equals(runtime.getState());
             // A freshly initialized row has offlineSince but no heartbeat. It is not a recovery.
             var wasOffline = runtime != null && "OFFLINE".equals(runtime.getState())
                     && (runtime.getLastHeartbeatAt() != null || runtime.getOfflineSince() == null);
@@ -84,33 +83,21 @@ public class DeviceRuntimeService {
                         .setRecoveryPending(0)
                         .setConsecutiveFailures(0);
             }
-            var onlineHeartbeat = status == null || status != 0;
-            if (onlineHeartbeat) {
-                runtime.setState("ONLINE")
-                        .setLastHeartbeatAt(now)
-                        .setOfflineSince(null)
-                        .setLastNoticeLevel(0)
-                        .setLastNoticeAt(null)
-                        .setRecoveryPending(wasOffline ? 1 : runtime.getRecoveryPending())
-                        .setClientVersion(clientVersion)
-                        .setUpdatedAt(now);
-            } else {
-                var offlineSince = runtime.getOfflineSince() == null ? now : runtime.getOfflineSince();
-                runtime.setState("OFFLINE")
-                        .setLastHeartbeatAt(now)
-                        .setOfflineSince(offlineSince)
-                        .setClientVersion(clientVersion)
-                        .setUpdatedAt(now);
-            }
+            // A received heartbeat proves the device-to-server transport is alive. The legacy
+            // status 0 is retained for scheduling/UI, but only a missing heartbeat marks offline.
+            runtime.setState("ONLINE")
+                    .setLastHeartbeatAt(now)
+                    .setOfflineSince(null)
+                    .setLastNoticeLevel(0)
+                    .setLastNoticeAt(null)
+                    .setRecoveryPending(wasOffline ? 1 : runtime.getRecoveryPending())
+                    .setClientVersion(clientVersion)
+                    .setUpdatedAt(now);
             saveRuntime(runtime, exists);
 
             dynamicInfo.getDeviceCounterMap().put(deviceToken, 3);
             dynamicInfo.getDeviceStatusMap().put(deviceToken, status == null ? 1 : status);
             dynamicInfo.getDeviceLastHeartbeatMap().put(deviceToken, now);
-
-            if (!onlineHeartbeat && wasOnline) {
-                submitRecovery(deviceToken, now);
-            }
 
             // A heartbeat is also the first safe point at which a stale client can be stopped.
             synchronized (dynamicInfo.getHaltList()) {
@@ -177,6 +164,7 @@ public class DeviceRuntimeService {
             failures++;
             var shouldNotify = failures >= 3
                     && (runtime.getLastFailureNoticeCount() == null || runtime.getLastFailureNoticeCount() < 3);
+            var hasFreshHeartbeat = "ONLINE".equals(runtime.getState()) && !isHeartbeatExpired(runtime, now);
             runtime.setConsecutiveFailures(failures).setUpdatedAt(now);
             if (shouldNotify) {
                 runtime.setLastFailureNoticeCount(3)
@@ -184,12 +172,13 @@ public class DeviceRuntimeService {
                         .setSuspendedUntil(now.plusHours(1));
             }
             saveRuntime(runtime, exists);
-            if (shouldNotify) {
+            if (shouldNotify && !hasFreshHeartbeat) {
                 var device = deviceMapper.selectOne(Wrappers.<DeviceEntity>lambdaQuery()
                         .eq(DeviceEntity::getDeviceToken, deviceToken));
                 if (ImportantDevicePolicy.includes(device)) {
-                    messageService.pushAdmin(ImportantDevicePolicy.NOTICE_PREFIX + " 设备异常",
-                            "设备 " + deviceName(device) + " 连续失败3次，已暂停1小时，期间不会继续分配新任务。");
+                    messageService.pushAdmin(ImportantDevicePolicy.NOTICE_PREFIX + " 设备任务连续失败",
+                            "设备 " + deviceName(device) + " 连续失败3次且30分钟未收到心跳，已暂停1小时；"
+                                    + "离线扫描会继续确认实际离线状态。");
                 }
             }
             return shouldNotify;
