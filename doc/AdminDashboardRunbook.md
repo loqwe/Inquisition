@@ -25,6 +25,10 @@ curl -ksS https://127.0.0.1:2000/v3/api-docs | grep -o '"/getDashboardOverview"'
 
 预期是容器 `running`，并能输出 `/getDashboardOverview`。只有接口缺失、前端再次出现 404，或 JAR/分支发生变化时，才需要重新做构建、部署和浏览器验收。
 
+## 总览设备范围
+
+管理员总览只展示 `IMPORTANT` 设备。`BACKUP` 设备不参与在线/离线数量、设备卡片或异常提醒统计；备用设备本身仍保留在设备管理页，并继续参与既有的备用调度逻辑。
+
 ## 发布验收基线
 
 - 构建：JDK 11 下执行 `./gradlew test bootJar`。
