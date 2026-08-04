@@ -8,6 +8,9 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 @Mapper
 public interface AccountMapper extends BaseMapper<AccountEntity> {
     @Delete("DELETE FROM account WHERE id = #{id}")
@@ -33,4 +36,14 @@ public interface AccountMapper extends BaseMapper<AccountEntity> {
     Page<AccountEntity> searchActiveExactFirst(Page<AccountEntity> page,
                                                @Param("keyword") String keyword,
                                                @Param("idKeyword") Long idKeyword);
+
+    @Select({
+            "SELECT a.* FROM account a",
+            "WHERE a.`delete` = 0",
+            "AND a.freeze = 0",
+            "AND a.task_type = 'daily'",
+            "AND a.expire_time >= #{now}",
+            "ORDER BY a.id ASC"
+    })
+    List<AccountEntity> selectEligibleDailyAccounts(@Param("now") LocalDateTime now);
 }

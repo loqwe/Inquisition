@@ -2,6 +2,7 @@ package moe.dazecake.inquisition.service.intf;
 
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
+import moe.dazecake.inquisition.model.entity.TaskAssignmentEntity;
 import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.utils.Result;
 
@@ -28,7 +29,7 @@ public interface TaskService {
      * @author DazeCake
      * @date 2023/1/27 0:06
      */
-    Result<String> completeTask(String deviceToken, String imageUrl);
+    Result<String> completeTask(String deviceToken, String assignmentId, String imageUrl);
 
     /**
      * 任务失败上报
@@ -40,7 +41,7 @@ public interface TaskService {
      * @author DazeCake
      * @date 2023/1/27 0:09
      */
-    Result<String> failTask(String deviceToken, String type, String imageUrl);
+    Result<String> failTask(String deviceToken, String assignmentId, String type, String imageUrl);
 
     /**
      * 临时插队
@@ -102,7 +103,7 @@ public interface TaskService {
 
     Result<String> clearAccountCooldown(Long id);
 
-    void lockTask(String deviceToken, AccountEntity account);
+    TaskAssignmentEntity lockTask(String deviceToken, AccountEntity account);
 
     void log(String deviceToken, AccountEntity account, String level, String title, String content, String imgUrl);
 

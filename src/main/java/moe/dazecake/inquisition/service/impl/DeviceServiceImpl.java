@@ -18,6 +18,7 @@ import moe.dazecake.inquisition.service.intf.DeviceService;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
 import moe.dazecake.inquisition.utils.DeviceRolePolicy;
 import moe.dazecake.inquisition.utils.DynamicInfo;
+import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +38,9 @@ public class DeviceServiceImpl implements DeviceService {
 
     @Resource
     AccountMapper accountMapper;
+
+    @Resource
+    DeviceRuntimeProjectionService deviceRuntimeProjectionService;
 
     @Override
     public void addDevice(AddDeviceDTO addDeviceDTO) {
@@ -83,11 +87,10 @@ public class DeviceServiceImpl implements DeviceService {
     @Override
     public LoadDeviceVO getLoadDevice() {
         var result = new LoadDeviceVO();
-        var devices = deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
-                .eq(DeviceEntity::getDelete, 0)
-        );
+        var devices = deviceRuntimeProjectionService.project(GameDayClock.now());
 
-        for (DeviceEntity device : devices) {
+        for (var projection : devices) {
+            var device = projection.getDevice();
             if (!dynamicInfo.getDeviceStatusMap().containsKey(device.getDeviceToken())) {
                 dynamicInfo.getDeviceStatusMap().put(device.getDeviceToken(), 0);
             }
@@ -95,7 +98,7 @@ public class DeviceServiceImpl implements DeviceService {
             if (device.getChinac() == null) {
                 device.setChinac(0);
             }
-            var deviceRole = DeviceRolePolicy.normalize(device.getDeviceRole());
+            var deviceRole = DeviceRolePolicy.effectiveRole(device);
             var loadDevice = new LoadDevice();
             loadDevice.setId(device.getId());
             loadDevice.setDeviceName(device.getDeviceName());
@@ -107,6 +110,12 @@ public class DeviceServiceImpl implements DeviceService {
             loadDevice.setDelete(device.getDelete());
             loadDevice.setDeviceRole(deviceRole);
             loadDevice.setStatus(dynamicInfo.getDeviceStatusMap().get(device.getDeviceToken()));
+            loadDevice.setRuntimeState(projection.getRuntimeState());
+            loadDevice.setLastHeartbeatAt(projection.getLastHeartbeatAt());
+            loadDevice.setOfflineSince(projection.getOfflineSince());
+            loadDevice.setSuspendedUntil(projection.getSuspendedUntil());
+            loadDevice.setCurrentAccountId(projection.getCurrentAccountId());
+            loadDevice.setCurrentAccountName(projection.getCurrentAccountName());
             result.getLoadDeviceList().add(loadDevice);
             if (DeviceRolePolicy.BACKUP.equals(deviceRole)) {
                 result.getBackupDeviceList().add(loadDevice);
@@ -123,9 +132,12 @@ public class DeviceServiceImpl implements DeviceService {
         if (deviceEntity != null) {
             var updatedDevice = DeviceConvert.INSTANCE.toDeviceEntity(updateDeviceDTO);
             var role = updateDeviceDTO.getDeviceRole();
-            updatedDevice.setDeviceRole(role == null || role.isBlank()
-                    ? DeviceRolePolicy.normalize(deviceEntity.getDeviceRole())
-                    : DeviceRolePolicy.normalize(role));
+            var normalizedRole = role == null || role.isBlank()
+                    ? null
+                    : DeviceRolePolicy.normalize(role);
+            updatedDevice.setDeviceRole(normalizedRole == null
+                    ? DeviceRolePolicy.effectiveRole(deviceEntity)
+                    : normalizedRole);
             deviceMapper.updateById(updatedDevice);
         }
     }

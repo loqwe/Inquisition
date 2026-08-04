@@ -15,4 +15,17 @@ public class WorkUser {
 
     private LocalDateTime expirationTime;
 
+    private String assignmentId = "";
+
+    private LocalDateTime assignedAt;
+
+    private LocalDateTime lastProgressAt;
+
+    private Boolean gameStarted = false;
+
+    public WorkUser(String deviceToken, LocalDateTime expirationTime) {
+        this.deviceToken = deviceToken;
+        this.expirationTime = expirationTime;
+    }
+
 }

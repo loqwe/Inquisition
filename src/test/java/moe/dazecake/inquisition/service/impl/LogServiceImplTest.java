@@ -22,6 +22,7 @@ class LogServiceImplTest {
         service.accountMapper = mock(AccountMapper.class);
         service.messageService = mock(MessageServiceImpl.class);
         service.logMapper = mock(LogMapper.class);
+        service.accountRuntimeService = mock(AccountRuntimeService.class);
 
         var dto = new AddLogDTO();
         dto.setAccount("18307339567");
@@ -44,6 +45,7 @@ class LogServiceImplTest {
         service.accountMapper = mock(AccountMapper.class);
         service.messageService = mock(MessageServiceImpl.class);
         service.logMapper = mock(LogMapper.class);
+        service.accountRuntimeService = mock(AccountRuntimeService.class);
 
         var dto = new AddLogDTO();
         dto.setAccount("18307339567");

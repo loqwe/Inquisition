@@ -1,6 +1,7 @@
 package moe.dazecake.inquisition.service.intf;
 
 import moe.dazecake.inquisition.constant.enums.TaskType;
+import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
 import moe.dazecake.inquisition.model.dto.account.AddAccountDTO;
 import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
@@ -47,6 +48,9 @@ public interface AccountService {
      */
     void updateAccount(AccountDTO accountDTO, Set<String> presentFields);
 
+    void updateAccount(AccountDTO accountDTO, Set<String> presentFields,
+                       AccountDispatchConfigDTO dispatchConfig);
+
     /**
      * 分页查询所有账号
      *
@@ -56,7 +60,8 @@ public interface AccountService {
      * @author DazeCake
      * @date 2023/1/25 23:34
      */
-    PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size, String taskType, String freeze, String expired, String deleted);
+    PageQueryVO<AccountWithSanVO> queryAllAccount(Long current, Long size, String taskType, String freeze,
+                                                  String expired, String deleted, String login);
 
     /**
      * 通过关键词查询账号

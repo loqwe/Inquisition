@@ -2,6 +2,7 @@ package moe.dazecake.inquisition;
 
 import moe.dazecake.inquisition.service.impl.ChinacServiceImpl;
 import moe.dazecake.inquisition.service.impl.EmailServiceImpl;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +17,7 @@ import java.util.HashMap;
 
 @SpringBootTest(classes = InquisitionApplication.class)
 @RunWith(SpringRunner.class)
+@Disabled("Manual integration tests with cloud purchase, device control, and email side effects")
 class InquisitionApplicationTests {
 
     @Autowired

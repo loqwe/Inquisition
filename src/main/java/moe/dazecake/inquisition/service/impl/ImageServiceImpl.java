@@ -20,6 +20,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.URL;
 import java.util.Date;
+import javax.annotation.Resource;
 
 @Service
 public class ImageServiceImpl implements ImageService {
@@ -54,10 +55,14 @@ public class ImageServiceImpl implements ImageService {
     @Value("${storage.chfs.uploadDir:}")
     private String chfsUploadDir;
 
+    @Resource
+    private DiscordImageStorage discordImageStorage;
 
     @Override
     public Result<String> uploadImage(String base64Image) {
-        if (ossEnable) {
+        if (discordImageStorage != null && discordImageStorage.isEnabled()) {
+            return discordImageStorage.uploadImage(base64Image);
+        } else if (ossEnable) {
             return uploadImageToCos(base64Image);
         } else if (chfsEnable) {
             return uploadImageToCHFS(base64Image);

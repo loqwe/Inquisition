@@ -70,6 +70,14 @@ public class LogEntity {
     @Schema(description = "账号")
     String account;
 
+    @Column(name = "account_id", comment = "Account ID")
+    @Schema(description = "Account ID")
+    Long accountId;
+
+    @Column(name = "assignment_id", comment = "Task assignment ID")
+    @Schema(description = "Task assignment ID")
+    String assignmentId;
+
     @Column(name = "password", comment = "密码")
     @Schema(description = "密码")
     String password;

@@ -2,10 +2,12 @@ package moe.dazecake.inquisition.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import moe.dazecake.inquisition.annotation.Login;
 import moe.dazecake.inquisition.model.dto.account.AccountDTO;
+import moe.dazecake.inquisition.model.dto.account.AccountDispatchConfigDTO;
 import moe.dazecake.inquisition.model.dto.account.AccountIDDTO;
 import moe.dazecake.inquisition.model.dto.account.AddAccountDTO;
 import moe.dazecake.inquisition.model.dto.user.UserStatusSTO;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.Set;
 
 @Tag(name = "账号接口")
 @ResponseBody
@@ -62,8 +65,10 @@ public class AccountController {
     @Login
     @Operation(summary = "分页查询账号")
     @GetMapping("/showAccount")
-    public Result<PageQueryVO<AccountWithSanVO>> showAccount(Long current, Long size, String taskType, String freeze, String expired, String deleted) {
-        return Result.success(accountService.queryAllAccount(current, size, taskType, freeze, expired, deleted), "查询成功");
+    public Result<PageQueryVO<AccountWithSanVO>> showAccount(Long current, Long size, String taskType, String freeze,
+                                                             String expired, String deleted, String login) {
+        return Result.success(accountService.queryAllAccount(current, size, taskType, freeze, expired, deleted, login),
+                "查询成功");
     }
 
     @Login
@@ -82,8 +87,31 @@ public class AccountController {
         }
         var presentFields = new HashSet<String>();
         accountJson.fieldNames().forEachRemaining(presentFields::add);
-        accountService.updateAccount(objectMapper.convertValue(accountJson, AccountDTO.class), presentFields);
-        return Result.success(null, "更新成功");
+        try {
+            AccountDispatchConfigDTO dispatchConfig = null;
+            if (presentFields.contains("dispatchConfig")) {
+                var dispatchNode = accountJson.get("dispatchConfig");
+                if (dispatchNode == null || !dispatchNode.isObject()) {
+                    return Result.paramError("dispatchConfig格式错误");
+                }
+                var allowedFields = Set.of("dispatchMode", "scheduleTime", "scheduleTimes");
+                var fieldNames = dispatchNode.fieldNames();
+                while (fieldNames.hasNext()) {
+                    if (!allowedFields.contains(fieldNames.next())) {
+                        return Result.paramError("dispatchConfig包含未知字段");
+                    }
+                }
+                dispatchConfig = objectMapper.convertValue(
+                        dispatchNode, AccountDispatchConfigDTO.class);
+            }
+            var accountFields = ((ObjectNode) accountJson.deepCopy());
+            accountFields.remove("dispatchConfig");
+            accountService.updateAccount(objectMapper.convertValue(accountFields, AccountDTO.class),
+                    presentFields, dispatchConfig);
+            return Result.success(null, "更新成功");
+        } catch (IllegalArgumentException exception) {
+            return Result.paramError(exception.getMessage());
+        }
     }
 
     @Login

@@ -70,6 +70,9 @@ public class ProUserServiceImpl implements ProUserService {
     private TaskServiceImpl taskService;
 
     @Resource
+    private DispatchQueueService dispatchQueueService;
+
+    @Resource
     private CDKServiceImpl cdkService;
 
     @Value("${inquisition.price.daily:1.0}")
@@ -222,14 +225,13 @@ public class ProUserServiceImpl implements ProUserService {
                 return Result.success("该用户已经在作战中");
             }
         }
-        for (Long waiter : dynamicInfo.getWaitUserList()) {
-            if (waiter.equals(userID)) {
-                dynamicInfo.getWaitUserList().remove(waiter);
-                dynamicInfo.getWaitUserList().add(0, waiter);
-                return Result.success("插队成功");
-            }
+        var alreadyQueued = dispatchQueueService.contains(userID);
+        if (!dispatchQueueService.enqueueManual(userID)) {
+            return Result.failed("账号当前无法加入任务队列");
         }
-        dynamicInfo.getWaitUserList().add(0, userID);
+        if (alreadyQueued) {
+            return Result.success("插队成功");
+        }
         dynamicInfo.setUserSanZero(userID);
         return Result.success("立即作战成功");
     }

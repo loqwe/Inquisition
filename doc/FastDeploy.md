@@ -149,6 +149,10 @@ dazecake/inquisition:latest
 
 此时 Inquisition 将以自定义配置运行
 
+需要使用 Discord 存储日志截图时，请参考 [Discord Worker 图床](DiscordImageStorage.md)。
+
+需要从任务完成截图校准理智时，请参考 [本地 OCR 理智识别](SanityOcr.md)。
+
 ### 升级
 
 ```shell

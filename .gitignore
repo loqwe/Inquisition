@@ -1,6 +1,8 @@
 HELP.md
 .gradle
 build/
+hs_err_pid*.log
+replay_pid*.log
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
@@ -39,3 +41,6 @@ out/
 /src/main/resources/aegirtech.com.keystore
 application-dev.yml
 config/
+/analysis/cloud-lua/original/
+/analysis/cloud-lua/extracted/
+/analysis/cloud-lua/runtime/

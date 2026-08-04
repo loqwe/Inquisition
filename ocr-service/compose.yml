@@ -1,0 +1,25 @@
+services:
+  sanity-ocr:
+    build:
+      context: .
+    image: inquisition-sanity-ocr:rapidocr-1.4.4
+    container_name: inquisition-sanity-ocr
+    restart: unless-stopped
+    expose:
+      - "8000"
+    networks:
+      - inquisition-internal
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.0
+
+networks:
+  inquisition-internal:
+    name: inquisition-internal

@@ -1,5 +1,6 @@
 package moe.dazecake.inquisition.model.entity.ConfigEntitySet;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -41,5 +42,7 @@ public class Daily {
     private boolean credit = true;
     private boolean task = true;
     private boolean activity = true;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Boolean shopping;
 
 }

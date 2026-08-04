@@ -50,10 +50,14 @@ public class MessageServiceImpl implements MessageService {
     @Override
     public void push(AccountEntity account, String title, String content) {
         if (enableWxPusher && account.getNotice().getWxUID().getEnable()) {
-            wxPusherService.push(Message.CONTENT_TYPE_MD,
-                    "# " + title + "\n\n" + content,
-                    account.getNotice().getWxUID().getText(),
-                    null);
+            try {
+                wxPusherService.push(Message.CONTENT_TYPE_MD,
+                        "# " + title + "\n\n" + content,
+                        account.getNotice().getWxUID().getText(),
+                        null);
+            } catch (Exception exception) {
+                log.warn("WXPusher user notification failed for account {}", account.getId(), exception);
+            }
         }
 
         if (enableMail && account.getNotice().getMail().getEnable()) {
@@ -94,7 +98,11 @@ public class MessageServiceImpl implements MessageService {
                 }
             }
             if (enableWxPusher && config.getWxPusherEnable() && !config.getWxPusherUid().isBlank() && wxTargets.add(config.getWxPusherUid())) {
-                wxPusherService.push(Message.CONTENT_TYPE_MD, markdown, config.getWxPusherUid(), null);
+                try {
+                    wxPusherService.push(Message.CONTENT_TYPE_MD, markdown, config.getWxPusherUid(), null);
+                } catch (Exception exception) {
+                    log.warn("WXPusher admin notification failed for uid {}", config.getWxPusherUid(), exception);
+                }
             }
             if (config.getPushPlusEnable() && !config.getPushPlusToken().isBlank() && pushPlusTargets.add(config.getPushPlusToken())) {
                 pushPlusService.push(config.getPushPlusToken(), title, markdown);
