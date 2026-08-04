@@ -160,6 +160,29 @@ class DeviceRuntimeServiceTest {
     }
 
     @Test
+    void heartbeatFromAPreviouslyRemovedBackupRevivesWhenTheDeviceIsActiveAgain() {
+        var service = new DeviceRuntimeService();
+        service.runtimeMapper = mock(DeviceRuntimeMapper.class);
+        service.deviceMapper = mock(DeviceMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.dynamicInfo.getHaltList().add("backup-device");
+        var device = new DeviceEntity().setDeviceToken("backup-device")
+                .setDeviceRole("BACKUP").setDelete(0);
+        var runtime = new DeviceRuntimeEntity().setDeviceToken("backup-device")
+                .setState("REMOVED").setOfflineSince(LocalDateTime.of(2026, 7, 1, 12, 0));
+        when(service.deviceMapper.selectOne(any())).thenReturn(device);
+        when(service.runtimeMapper.selectById("backup-device")).thenReturn(runtime);
+        var now = LocalDateTime.of(2026, 7, 19, 12, 0);
+
+        assertFalse(service.recordHeartbeat("backup-device", 1, null, "1.0", now));
+
+        assertEquals("ONLINE", runtime.getState());
+        assertEquals(now, runtime.getLastHeartbeatAt());
+        assertFalse(service.dynamicInfo.getHaltList().contains("backup-device"));
+        verify(service.runtimeMapper).updateById(runtime);
+    }
+
+    @Test
     void scanKeepsDeviceOnlineBeforeThirtyMinutesWithoutHeartbeat() {
         var service = new DeviceRuntimeService();
         service.runtimeMapper = mock(DeviceRuntimeMapper.class);
@@ -296,7 +319,8 @@ class DeviceRuntimeServiceTest {
         service.messageService = mock(MessageServiceImpl.class);
         service.recoveryExecutor = Runnable::run;
         var now = LocalDateTime.of(2026, 7, 19, 12, 0);
-        var device = new DeviceEntity().setDeviceName("设备A").setDeviceToken("a").setDelete(0);
+        var device = new DeviceEntity().setDeviceName("设备A").setDeviceToken("a")
+                .setDeviceRole("IMPORTANT").setDelete(0);
         var runtime = new DeviceRuntimeEntity().setDeviceToken("a").setState("OFFLINE")
                 .setOfflineSince(now.minusHours(24)).setLastNoticeLevel(60);
         when(service.deviceMapper.selectList(any())).thenReturn(List.of(device));
@@ -312,7 +336,7 @@ class DeviceRuntimeServiceTest {
     }
 
     @Test
-    void removalNoticeOnlyReportsImportantDevicesWhileRemovingAllExpiredDevices() {
+    void removalOnlySoftDeletesExpiredImportantDevices() {
         var service = new DeviceRuntimeService();
         service.runtimeMapper = mock(DeviceRuntimeMapper.class);
         service.deviceMapper = mock(DeviceMapper.class);
@@ -321,8 +345,10 @@ class DeviceRuntimeServiceTest {
         service.messageService = mock(MessageServiceImpl.class);
         service.recoveryExecutor = Runnable::run;
         var now = LocalDateTime.of(2026, 7, 19, 12, 0);
-        var deviceA = new DeviceEntity().setDeviceName("A").setDeviceToken("a").setDelete(0);
-        var deviceB = new DeviceEntity().setDeviceName("B").setDeviceToken("b").setDelete(0);
+        var deviceA = new DeviceEntity().setDeviceName("A").setDeviceToken("a")
+                .setDeviceRole("IMPORTANT").setDelete(0);
+        var deviceB = new DeviceEntity().setDeviceName("B").setDeviceToken("b")
+                .setDeviceRole("BACKUP").setDelete(0);
         when(service.deviceMapper.selectList(any())).thenReturn(List.of(deviceA, deviceB));
         when(service.deviceMapper.updateById(any())).thenReturn(1);
         when(service.runtimeMapper.selectById("a")).thenReturn(new DeviceRuntimeEntity()
@@ -334,12 +360,39 @@ class DeviceRuntimeServiceTest {
 
         var result = service.scan(now);
 
-        assertEquals(2, result.getRemovedDevices().size());
+        assertEquals(1, result.getRemovedDevices().size());
         assertEquals(1, deviceA.getDelete());
-        assertEquals(1, deviceB.getDelete());
+        assertEquals(0, deviceB.getDelete());
+        assertEquals("OFFLINE", service.runtimeMapper.selectById("b").getState());
         verify(service.messageService).pushAdmin(eq("[审判庭重点设备] 设备移除"),
                 org.mockito.ArgumentMatchers.argThat(content -> content.contains("A")
                         && !content.contains("B")));
+    }
+
+    @Test
+    void backupDeviceRemainsVisibleAfterSeveralDaysOffline() {
+        var service = new DeviceRuntimeService();
+        service.runtimeMapper = mock(DeviceRuntimeMapper.class);
+        service.deviceMapper = mock(DeviceMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.taskRecoveryService = mock(TaskRecoveryService.class);
+        service.messageService = mock(MessageServiceImpl.class);
+        var now = LocalDateTime.of(2026, 7, 19, 12, 0);
+        var device = new DeviceEntity().setDeviceName("B").setDeviceToken("b")
+                .setDeviceRole("BACKUP").setDelete(0);
+        var runtime = new DeviceRuntimeEntity().setDeviceToken("b").setState("OFFLINE")
+                .setOfflineSince(now.minusDays(7)).setLastNoticeLevel(60);
+        when(service.deviceMapper.selectList(any())).thenReturn(List.of(device));
+        when(service.runtimeMapper.selectById("b")).thenReturn(runtime);
+
+        var result = service.scan(now);
+
+        assertEquals(0, device.getDelete());
+        assertEquals("OFFLINE", runtime.getState());
+        assertTrue(result.getRemovedDevices().isEmpty());
+        verify(service.deviceMapper, never()).updateById(any());
+        verify(service.messageService, never()).pushAdmin(any(), any());
+        verify(service.taskRecoveryService, never()).recoverDeviceOffline(any(), any());
     }
 
     @Test

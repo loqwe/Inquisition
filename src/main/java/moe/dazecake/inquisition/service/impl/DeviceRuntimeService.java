@@ -61,11 +61,15 @@ public class DeviceRuntimeService {
         }
         synchronized (deviceToken.intern()) {
             var runtime = runtimeMapper.selectById(deviceToken);
-            if (runtime != null && "REMOVED".equals(runtime.getState())) {
+            var activeDevice = findActiveDevice(deviceToken);
+            if (activeDevice == null) {
                 requestHalt(deviceToken);
                 return true;
             }
-            if (!isActiveDevice(deviceToken, now)) {
+            var restoredBackup = runtime != null
+                    && "REMOVED".equals(runtime.getState())
+                    && ImportantDevicePolicy.isBackup(activeDevice);
+            if (runtime != null && "REMOVED".equals(runtime.getState()) && !restoredBackup) {
                 requestHalt(deviceToken);
                 return true;
             }
@@ -73,6 +77,23 @@ public class DeviceRuntimeService {
             // Startup may have seeded an offline row while this request was being accepted.
             runtime = runtimeMapper.selectById(deviceToken);
             var exists = runtime != null;
+            if (restoredBackup && runtime != null) {
+                runtime.setState("OFFLINE")
+                        .setLastHeartbeatAt(null)
+                        .setOfflineSince(now)
+                        .setLastNoticeLevel(0)
+                        .setLastNoticeAt(null)
+                        .setRecoveryPending(0)
+                        .setConsecutiveFailures(0)
+                        .setLastFailureNoticeCount(0)
+                        .setLastFailureNoticeAt(null)
+                        .setSuspendedUntil(null);
+                synchronized (dynamicInfo.getHaltList()) {
+                    while (dynamicInfo.getHaltList().contains(deviceToken)) {
+                        dynamicInfo.getHaltList().remove(deviceToken);
+                    }
+                }
+            }
             // A freshly initialized row has offlineSince but no heartbeat. It is not a recovery.
             var wasOffline = runtime != null && "OFFLINE".equals(runtime.getState())
                     && (runtime.getLastHeartbeatAt() != null || runtime.getOfflineSince() == null);
@@ -236,7 +257,8 @@ public class DeviceRuntimeService {
                 var offlineSince = runtime.getOfflineSince() == null ? now : runtime.getOfflineSince();
                 runtime.setOfflineSince(offlineSince);
                 var offlineMinutes = Math.max(0, Duration.between(offlineSince, now).toMinutes());
-                if (!offlineSince.plus(SOFT_DELETE_AFTER).isAfter(now)) {
+                if (ImportantDevicePolicy.includes(device)
+                        && !offlineSince.plus(SOFT_DELETE_AFTER).isAfter(now)) {
                     device.setDelete(1);
                     if (deviceMapper.updateById(device) != 1) {
                         device.setDelete(0);
@@ -285,19 +307,19 @@ public class DeviceRuntimeService {
         return new ScanResult(offlineNotices, recoveryNotices, removedDevices);
     }
 
-    private boolean isActiveDevice(String deviceToken, LocalDateTime now) {
+    private DeviceEntity findActiveDevice(String deviceToken) {
         if (deviceMapper == null) {
-            return false;
+            return null;
         }
         var device = deviceMapper.selectOne(Wrappers.<DeviceEntity>lambdaQuery()
                 .eq(DeviceEntity::getDeviceToken, deviceToken)
                 .eq(DeviceEntity::getDelete, 0)
                 .last("LIMIT 1"));
         if (device == null) {
-            return false;
+            return null;
         }
         initializeDeviceMemory(device.getDeviceToken());
-        return true;
+        return device;
     }
 
     private void initializeDeviceMemory(String deviceToken) {
