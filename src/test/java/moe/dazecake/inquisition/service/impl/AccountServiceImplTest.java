@@ -454,6 +454,33 @@ class AccountServiceImplTest {
                 org.mockito.ArgumentMatchers.argThat(ids -> ids.containsAll(Set.of(1L, 2L))));
     }
 
+    @Test
+    void scheduledAccountWithoutNextRunIsShownAsFailedDespiteAnOlderSuccess() {
+        var service = new AccountServiceImpl();
+        service.accountMapper = mock(AccountMapper.class);
+        service.dynamicInfo = new DynamicInfo();
+        service.dailyLoginService = dailyLoginService(mock(LogMapper.class));
+        initializeDispatchHydration(service);
+        var page = new Page<AccountEntity>(1, 10);
+        page.setRecords(List.of(activeAccount(1L)));
+        page.setTotal(1);
+        when(service.dispatchConfigMapper.selectBatchIds(any())).thenReturn(List.of(
+                new AccountDispatchConfigEntity().setAccountId(1L)
+                        .setDispatchMode(AccountDispatchConfigService.SCHEDULED)
+                        .setScheduleTime(LocalTime.of(9, 0))
+                        .setActivationPending(0)));
+        when(service.dispatchTimeMapper.selectByAccountIds(any())).thenReturn(List.of(
+                new AccountDispatchTimeEntity().setAccountId(1L)
+                        .setScheduleTime(LocalTime.of(9, 0))));
+        when(service.scheduledRunMapper.selectLatestByAccountIds(any())).thenReturn(List.of(
+                new AccountScheduledRunEntity().setId(41L).setAccountId(1L)
+                        .setStatus(AccountScheduledRunService.STATUS_SUCCEEDED)));
+
+        var result = service.getAccountWithSanVOPageQueryVO(page);
+
+        assertEquals("FAILED", result.getRecords().get(0).getScheduleStatus());
+    }
+
     private static AccountServiceImpl dispatchUpdateService() {
         var service = new AccountServiceImpl();
         service.accountMapper = mock(AccountMapper.class);

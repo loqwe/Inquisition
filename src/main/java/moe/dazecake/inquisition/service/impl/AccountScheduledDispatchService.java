@@ -32,9 +32,28 @@ public class AccountScheduledDispatchService {
     public List<AccountScheduledRunEntity> scan(LocalDateTime now) {
         Objects.requireNonNull(now, "now");
         var limit = validatedBatchSize();
+        var repaired = 0;
+        var failed = 0;
+        var missingConfigurations = configMapper.selectMissingNext(now, limit);
+        if (missingConfigurations != null) {
+            for (var index = 0; index < missingConfigurations.size() && index < limit; index++) {
+                var candidate = missingConfigurations.get(index);
+                if (candidate == null || candidate.getAccountId() == null) {
+                    continue;
+                }
+                try {
+                    if (processor.repairMissingNext(candidate.getAccountId(), now)) {
+                        repaired++;
+                    }
+                } catch (RuntimeException exception) {
+                    failed++;
+                    log.warn("账号定时调度空指针修复失败，账号 {}, errorType={}",
+                            candidate.getAccountId(), exception.getClass().getSimpleName());
+                }
+            }
+        }
         var dueConfigurations = configMapper.selectDue(now, limit);
         var processed = 0;
-        var failed = 0;
         if (dueConfigurations != null) {
             for (var index = 0; index < dueConfigurations.size() && index < limit; index++) {
                 var candidate = dueConfigurations.get(index);
@@ -53,12 +72,12 @@ public class AccountScheduledDispatchService {
         }
         var dispatchable = restoreDispatchable(now);
         if (failed > 0) {
-            log.warn("账号定时调度批次部分失败: processed={}, failed={}, dispatchable={}",
-                    processed, failed, dispatchable.size());
+            log.warn("账号定时调度批次部分失败: repaired={}, processed={}, failed={}, dispatchable={}",
+                    repaired, processed, failed, dispatchable.size());
             throw new PartialScheduledDispatchException(failed, dispatchable);
         }
-        log.info("账号定时调度扫描完成: processed={}, failed={}, dispatchable={}",
-                processed, failed, dispatchable.size());
+        log.info("账号定时调度扫描完成: repaired={}, processed={}, failed={}, dispatchable={}",
+                repaired, processed, failed, dispatchable.size());
         return dispatchable;
     }
 

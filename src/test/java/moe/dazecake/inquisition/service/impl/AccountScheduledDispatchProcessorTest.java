@@ -15,11 +15,14 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AccountScheduledDispatchProcessorTest {
@@ -88,6 +91,39 @@ class AccountScheduledDispatchProcessorTest {
     }
 
     @Test
+    void missingSchedulePointerIsRecalculatedForAnEligibleAccount() {
+        var processor = processor();
+        var now = LocalDateTime.of(2026, 8, 7, 21, 15);
+        var next = LocalDateTime.of(2026, 8, 8, 9, 0);
+        var times = List.of(LocalTime.of(9, 0), LocalTime.of(21, 0));
+        var config = dueConfig(7L, null);
+        var account = validAccount(7L, now);
+        stubLocked(processor, config, account);
+        when(processor.configService.getScheduleTimes(config)).thenReturn(times);
+        when(processor.calculator.nextOccurrence(account, times, now)).thenReturn(next);
+        when(processor.configMapper.scheduleNext(7L, next)).thenReturn(1);
+
+        assertTrue(processor.repairMissingNext(7L, now));
+
+        verify(processor.configMapper).selectByIdForUpdate(7L);
+        verify(processor.calculator).nextOccurrence(account, times, now);
+        verify(processor.configMapper).scheduleNext(7L, next);
+    }
+
+    @Test
+    void missingSchedulePointerIsNotRestoredForAnIneligibleAccount() {
+        var processor = processor();
+        var now = LocalDateTime.of(2026, 8, 7, 21, 15);
+        var config = dueConfig(7L, null);
+        stubLocked(processor, config, validAccount(7L, now).setDelete(1));
+
+        assertFalse(processor.repairMissingNext(7L, now));
+
+        verify(processor.configMapper, never()).scheduleNext(any(), any());
+        verifyNoInteractions(processor.calculator);
+    }
+
+    @Test
     void malformedScheduleRollsBackItsAccountTransaction() {
         var processor = processor();
         var now = LocalDateTime.of(2026, 7, 28, 20, 0);
@@ -112,6 +148,15 @@ class AccountScheduledDispatchProcessorTest {
     void processUsesRequiresNewTransaction() throws Exception {
         var annotation = AccountScheduledDispatchProcessor.class
                 .getMethod("process", Long.class, LocalDateTime.class)
+                .getAnnotation(Transactional.class);
+
+        assertEquals(Propagation.REQUIRES_NEW, annotation.propagation());
+    }
+
+    @Test
+    void pointerRepairUsesRequiresNewTransaction() throws Exception {
+        var annotation = AccountScheduledDispatchProcessor.class
+                .getMethod("repairMissingNext", Long.class, LocalDateTime.class)
                 .getAnnotation(Transactional.class);
 
         assertEquals(Propagation.REQUIRES_NEW, annotation.propagation());

@@ -698,6 +698,15 @@ public class AccountServiceImpl implements AccountService {
                 : new ArrayList<>(persistedTimes);
         target.setScheduleTimes(scheduleTimes);
         target.setScheduleTime(scheduleTimes.isEmpty() ? null : scheduleTimes.get(0));
+        if (latestRun != null && AccountScheduledRunService.isActiveStatus(latestRun.getStatus())) {
+            target.setScheduleStatus(latestRun.getStatus());
+            return;
+        }
+        if (config.getNextScheduledAt() == null
+                && Integer.valueOf(0).equals(config.getActivationPending())) {
+            target.setScheduleStatus(AccountScheduledRunService.STATUS_FAILED);
+            return;
+        }
         if (latestRun == null) {
             target.setScheduleStatus("NOT_RUN");
             return;

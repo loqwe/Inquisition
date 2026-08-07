@@ -53,6 +53,24 @@ public interface AccountDispatchConfigMapper extends BaseMapper<AccountDispatchC
     List<AccountDispatchConfigEntity> selectDue(@Param("now") LocalDateTime now,
                                                 @Param("limit") int limit);
 
+    @Select({
+            "SELECT config.account_id, config.dispatch_mode, config.schedule_time,",
+            "config.next_scheduled_at, config.activation_pending,",
+            "config.created_at, config.updated_at",
+            "FROM account_dispatch_config config",
+            "JOIN account account_row ON account_row.id = config.account_id",
+            "WHERE config.dispatch_mode = 'SCHEDULED'",
+            "AND config.activation_pending = 0",
+            "AND config.next_scheduled_at IS NULL",
+            "AND account_row.task_type = 'daily'",
+            "AND account_row.`delete` = 0",
+            "AND account_row.expire_time > #{now}",
+            "ORDER BY config.account_id",
+            "LIMIT #{limit}"
+    })
+    List<AccountDispatchConfigEntity> selectMissingNext(@Param("now") LocalDateTime now,
+                                                        @Param("limit") int limit);
+
     @Update({
             "UPDATE account_dispatch_config",
             "SET next_scheduled_at = NULL",

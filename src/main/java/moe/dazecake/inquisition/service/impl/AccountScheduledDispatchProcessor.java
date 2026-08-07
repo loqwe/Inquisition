@@ -63,6 +63,40 @@ public class AccountScheduledDispatchProcessor {
         advanceDue(config, account, dueAt, dueAt);
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean repairMissingNext(Long accountId, LocalDateTime now) {
+        Objects.requireNonNull(accountId, "accountId");
+        Objects.requireNonNull(now, "now");
+        var config = configMapper.selectByIdForUpdate(accountId);
+        if (!needsNextRepair(config)) {
+            return false;
+        }
+
+        var account = accountMapper.selectById(accountId);
+        if (!isSchedulableDailyAccount(account, now)) {
+            return false;
+        }
+        var scheduleTimes = configService.getScheduleTimes(config);
+        if (scheduleTimes.isEmpty()) {
+            throw new IllegalStateException("Persisted SCHEDULED configuration has no scheduleTime");
+        }
+        var next = calculator.nextOccurrence(account, scheduleTimes, now);
+        if (next == null || !next.isAfter(now)) {
+            throw new IllegalStateException("Repaired account schedule must be in the future");
+        }
+        if (configMapper.scheduleNext(accountId, next) != 1) {
+            throw new IllegalStateException("Unable to repair missing account schedule");
+        }
+        return true;
+    }
+
+    private boolean needsNextRepair(AccountDispatchConfigEntity config) {
+        return config != null
+                && AccountDispatchConfigService.SCHEDULED.equals(config.getDispatchMode())
+                && Integer.valueOf(0).equals(config.getActivationPending())
+                && config.getNextScheduledAt() == null;
+    }
+
     private boolean isStillDue(AccountDispatchConfigEntity config, LocalDateTime now) {
         return config != null
                 && AccountDispatchConfigService.SCHEDULED.equals(config.getDispatchMode())
