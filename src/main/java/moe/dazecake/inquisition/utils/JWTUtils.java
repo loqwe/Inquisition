@@ -53,6 +53,8 @@ public class JWTUtils {
             if (SECRET == null || SECRET.isEmpty() || token == null || token.isEmpty()) return false;
             DecodedJWT jwt = JWT.require(Algorithm.HMAC256(SECRET)).withIssuer(ISSUER)
                     .build().verify(stripBearer(token));
+            String type = jwt.getClaim("type").asString();
+            if (type == null || jwt.getAudience() == null || !jwt.getAudience().contains(type)) return false;
             Long revokedUntil = REVOKED.get(jwt.getId());
             if (revokedUntil != null) {
                 if (revokedUntil > System.currentTimeMillis()) return false;
