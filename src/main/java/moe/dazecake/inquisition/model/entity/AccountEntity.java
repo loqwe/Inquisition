@@ -11,6 +11,7 @@ import com.gitee.sunchenbin.mybatis.actable.annotation.IsKey;
 import com.gitee.sunchenbin.mybatis.actable.annotation.IsNotNull;
 import com.gitee.sunchenbin.mybatis.actable.constants.MySqlTypeConstant;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -49,7 +50,16 @@ public class AccountEntity {
 
     @Column(name = "password", comment = "密码")
     @Schema(description = "密码")
+    @JsonIgnore
     String password;//密码
+
+    @JsonIgnore
+    @Column(name = "password_ciphertext", comment = "终末地密码密文")
+    String passwordCiphertext;
+
+    @JsonIgnore
+    @Column(name = "password_verifier", comment = "终末地密码校验摘要")
+    String passwordVerifier;
 
     @Column(name = "freeze", comment = "冻结")
     @Schema(description = "冻结")

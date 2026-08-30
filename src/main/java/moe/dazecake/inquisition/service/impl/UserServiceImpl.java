@@ -15,6 +15,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.vo.UserLoginVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
 import moe.dazecake.inquisition.service.intf.UserService;
+import moe.dazecake.inquisition.security.EndfieldCredentialService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.JWTUtils;
@@ -60,6 +61,9 @@ public class UserServiceImpl implements UserService {
     @Resource
     ProUserMapper proUserMapper;
 
+    @Resource
+    EndfieldCredentialService credentialService;
+
     @Value("${wx-pusher.app-token:}")
     String appToken;
 
@@ -77,7 +81,8 @@ public class UserServiceImpl implements UserService {
         var newAccount = new AccountEntity();
         newAccount.setName(username)
                 .setAccount(account)
-                .setPassword(password);
+                .setPasswordVerifier(credentialService.hash(password))
+                .setPasswordCiphertext(credentialService.encrypt(password));
         return cdkService.createUserByCDK(newAccount, cdk);
     }
 
@@ -121,11 +126,17 @@ public class UserServiceImpl implements UserService {
         var user = accountMapper.selectOne(
                 Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getAccount, account)
-                        .eq(AccountEntity::getPassword, password)
                         .eq(AccountEntity::getDelete, 0)
         );
 
-        if (user != null) {
+        if (user != null && (credentialService.matches(password, user.getPasswordVerifier()) ||
+                Objects.equals(password, user.getPassword()))) {
+            if (user.getPasswordVerifier() == null || user.getPasswordVerifier().isBlank()) {
+                user.setPasswordVerifier(credentialService.hash(password));
+                user.setPasswordCiphertext(credentialService.encrypt(password));
+                user.setPassword(null);
+                accountMapper.updateById(user);
+            }
             return Result.success(new UserLoginVO(JWTUtils.generateTokenForUser(user)), "登录成功");
         } else {
             return Result.unauthorized("账号或密码错误");
@@ -188,7 +199,9 @@ public class UserServiceImpl implements UserService {
         if (server == 0) {
             if (httpService.isOfficialAccountWork(account, password)) {
                 accountEntity.setAccount(account);
-                accountEntity.setPassword(password);
+                accountEntity.setPasswordVerifier(credentialService.hash(password));
+                accountEntity.setPasswordCiphertext(credentialService.encrypt(password));
+                accountEntity.setPassword(null);
                 accountEntity.setServer(server);
                 accountEntity.setUpdateTime(LocalDateTime.now());
                 accountMapper.updateById(accountEntity);
@@ -198,7 +211,9 @@ public class UserServiceImpl implements UserService {
         } else if (server == 1) {
             if (httpService.isBiliAccountWork(account, password)) {
                 accountEntity.setAccount(account);
-                accountEntity.setPassword(password);
+                accountEntity.setPasswordVerifier(credentialService.hash(password));
+                accountEntity.setPasswordCiphertext(credentialService.encrypt(password));
+                accountEntity.setPassword(null);
                 accountEntity.setServer(server);
                 accountEntity.setFreeze(0);
                 accountEntity.getBLimitDevice().clear();

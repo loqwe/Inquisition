@@ -10,6 +10,7 @@ import com.gitee.sunchenbin.mybatis.actable.annotation.IsKey;
 import com.gitee.sunchenbin.mybatis.actable.annotation.IsNotNull;
 import com.gitee.sunchenbin.mybatis.actable.constants.MySqlTypeConstant;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -72,6 +73,7 @@ public class LogEntity {
 
     @Column(name = "password", comment = "密码")
     @Schema(description = "密码")
+    @JsonIgnore
     String password;
 
     @Column(name = "time", comment = "时间")

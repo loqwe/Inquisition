@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS account (
     name TEXT,
     account TEXT,
     password TEXT,
+    password_ciphertext TEXT,
+    password_verifier TEXT,
     freeze INTEGER DEFAULT 0,
     server INTEGER DEFAULT 0,
     task_type TEXT DEFAULT 'daily',

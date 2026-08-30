@@ -127,12 +127,9 @@ public class CDKServiceImpl implements CDKService {
         }
 
 
-        var account = accountMapper.selectOne(
-                Wrappers.<AccountEntity>lambdaQuery()
-                        .eq(AccountEntity::getAccount, accountEntity.getAccount())
-                        .eq(AccountEntity::getPassword, accountEntity.getPassword())
-                        .eq(AccountEntity::getDelete, 0)
-        );
+        var account = accountMapper.selectOne(Wrappers.<AccountEntity>lambdaQuery()
+                .eq(AccountEntity::getId, accountEntity.getId())
+                .eq(AccountEntity::getDelete, 0));
         accountService.forceFightAccount(account.getId(), true);
 
         return Result.success("创建成功");

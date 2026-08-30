@@ -3,6 +3,7 @@ package moe.dazecake.inquisition.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.extern.slf4j.Slf4j;
 import moe.dazecake.inquisition.constant.enums.TaskType;
+import moe.dazecake.inquisition.security.EndfieldCredentialService;
 import moe.dazecake.inquisition.mapper.AccountMapper;
 import moe.dazecake.inquisition.mapper.DeviceMapper;
 import moe.dazecake.inquisition.mapper.mapstruct.AccountConvert;
@@ -35,6 +36,9 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class TaskServiceImpl implements TaskService {
+
+    @Resource
+    EndfieldCredentialService credentialService;
 
     @Resource
     DeviceMapper deviceMapper;
@@ -777,7 +781,7 @@ public class TaskServiceImpl implements TaskService {
             }
             case ("accountError"): {
                 if (account.getServer() == 0) {
-                    if (httpService.isOfficialAccountWork(account.getAccount(), account.getPassword())) {
+                    if (httpService.isOfficialAccountWork(account.getAccount(), plainPassword(account))) {
                         putAccountOnCooldown(account, deviceToken, "accountError", LocalDateTime.now().plusHours(1), true, true);
                     } else {
                         account.setFreeze(1);
@@ -788,7 +792,7 @@ public class TaskServiceImpl implements TaskService {
                         messageService.push(account, "账号异常", "您的账号密码有误，请在面板更新正确的账号密码，否则托管将无法继续进行");
                     }
                 } else if (account.getServer() == 1) {
-                    if (httpService.isBiliAccountWork(account.getAccount(), account.getPassword())) {
+                    if (httpService.isBiliAccountWork(account.getAccount(), plainPassword(account))) {
                         putAccountOnCooldown(account, deviceToken, "biliLoginLimit", LocalDateTime.now().plusHours(1), true, true);
                         messageService.push(account, "账号异常", "您近期登陆的设备较多，已被B服限制登陆，请立即修改密码并于面板更新密码,否则托管可能将无法继续进行");
                     } else {
@@ -910,5 +914,11 @@ public class TaskServiceImpl implements TaskService {
 
         }
 
+    }
+
+    private String plainPassword(AccountEntity account) {
+        if (account.getPassword() != null && !account.getPassword().isBlank()) return account.getPassword();
+        if (account.getPasswordCiphertext() == null || account.getPasswordCiphertext().isBlank()) return "";
+        return credentialService.decrypt(account.getPasswordCiphertext());
     }
 }

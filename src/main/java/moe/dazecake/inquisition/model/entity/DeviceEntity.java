@@ -11,6 +11,7 @@ import com.gitee.sunchenbin.mybatis.actable.annotation.IsKey;
 import com.gitee.sunchenbin.mybatis.actable.annotation.IsNotNull;
 import com.gitee.sunchenbin.mybatis.actable.constants.MySqlTypeConstant;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -45,6 +46,7 @@ public class DeviceEntity {
 
     @Column(name = "device_token", comment = "设备token")
     @Schema(description = "设备token")
+    @JsonIgnore
     String deviceToken;
 
     @Column(name = "work_scope", comment = "作用域", type = MySqlTypeConstant.JSON)

@@ -12,6 +12,7 @@ import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.ConfigEntitySet.ConfigEntity;
 import moe.dazecake.inquisition.model.vo.account.AccountWithSanVO;
 import moe.dazecake.inquisition.model.vo.query.PageQueryVO;
+import moe.dazecake.inquisition.security.EndfieldCredentialService;
 import moe.dazecake.inquisition.service.intf.AccountService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DynamicInfo;
@@ -41,12 +42,16 @@ public class AccountServiceImpl implements AccountService {
     @Resource
     TaskServiceImpl taskService;
 
+    @Resource
+    EndfieldCredentialService credentialService;
+
     @Override
     public void addAccount(AddAccountDTO addAccountDTO) {
         var accountEntity = new AccountEntity();
         accountEntity.setName(addAccountDTO.getName())
                 .setAccount(addAccountDTO.getAccount())
-                .setPassword(addAccountDTO.getPassword())
+                .setPasswordVerifier(credentialService.hash(addAccountDTO.getPassword()))
+                .setPasswordCiphertext(credentialService.encrypt(addAccountDTO.getPassword()))
                 .setServer(addAccountDTO.getServer())
                 .setExpireTime(addAccountDTO.getExpireTime());
         if (addAccountDTO.getFreeze() != null) {
@@ -92,7 +97,8 @@ public class AccountServiceImpl implements AccountService {
                     account.setName(accountJson.get("username" + i));
                     account.setAccount(accountJson.get("username" + i));
                 }
-                account.setPassword(accountJson.get("password" + i));
+                account.setPasswordVerifier(credentialService.hash(accountJson.get("password" + i)));
+                account.setPasswordCiphertext(credentialService.encrypt(accountJson.get("password" + i)));
                 if (accountJson.containsKey("server" + i)) {
                     account.setServer(Long.valueOf(accountJson.get("server" + i)));
                 } else {
@@ -141,7 +147,9 @@ public class AccountServiceImpl implements AccountService {
             account.setAccount(accountDTO.getAccount());
         }
         if (presentFields.contains("password")) {
-            account.setPassword(accountDTO.getPassword());
+            account.setPasswordVerifier(credentialService.hash(accountDTO.getPassword()));
+            account.setPasswordCiphertext(credentialService.encrypt(accountDTO.getPassword()));
+            account.setPassword(null);
         }
         if (presentFields.contains("freeze")) {
             account.setFreeze(accountDTO.getFreeze());

@@ -11,6 +11,7 @@ import moe.dazecake.inquisition.model.dto.fmpay.CreateOrderResultEntity;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.BillEntity;
 import moe.dazecake.inquisition.service.intf.PayService;
+import moe.dazecake.inquisition.security.EndfieldCredentialService;
 import moe.dazecake.inquisition.utils.Encoder;
 import moe.dazecake.inquisition.utils.JWTUtils;
 import moe.dazecake.inquisition.utils.Result;
@@ -68,6 +69,9 @@ public class PayServiceImpl implements PayService {
 
     @Resource
     AccountServiceImpl accountService;
+
+    @Resource
+    EndfieldCredentialService credentialService;
 
     @Override
     public BillEntity createOrder(Double amount, String payType, String returnPath) {
@@ -158,7 +162,9 @@ public class PayServiceImpl implements PayService {
                     var newUser = new AccountEntity();
                     newUser.setName(bill.getParam().split("\\|")[0]);
                     newUser.setAccount(bill.getParam().split("\\|")[1]);
-                    newUser.setPassword(bill.getParam().split("\\|")[2]);
+                    String plainPassword = bill.getParam().split("\\|")[2];
+                    newUser.setPasswordVerifier(credentialService.hash(plainPassword));
+                    newUser.setPasswordCiphertext(credentialService.encrypt(plainPassword));
                     newUser.setServer(Long.valueOf(bill.getParam().split("\\|")[3]));
                     newUser.setAgent(Long.valueOf(bill.getParam().split("\\|")[4]));
                     newUser.setExpireTime(LocalDateTime.now().plusDays(3));
