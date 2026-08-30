@@ -3,74 +3,75 @@ package moe.dazecake.inquisition.utils;
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.JWTCreator;
 import com.auth0.jwt.algorithms.Algorithm;
+import com.auth0.jwt.interfaces.DecodedJWT;
 import moe.dazecake.inquisition.model.entity.AccountEntity;
 import moe.dazecake.inquisition.model.entity.AdminEntity;
 import moe.dazecake.inquisition.model.entity.ProUserEntity;
 
 import java.util.Date;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class JWTUtils {
-
-    //    private static String SECRET = RandomStringUtils.randomAlphabetic(16);
     public static String SECRET;
+    private static final long DEFAULT_EXPIRATION = 1000L * 60 * 60 * 2;
+    private static final String ISSUER = "inquisition";
+    private static final ConcurrentHashMap<String, Long> REVOKED = new ConcurrentHashMap<>();
 
-
-    private static final long EXPIRATION = 1000L * 60 * 60 * 24 * 365 * 100; // 100 years
-
-    public static String generateTokenForAdmin(AdminEntity adminEntity) {
-        JWTCreator.Builder builder = JWT.create();
-        builder.withClaim("id", adminEntity.getId())
-                .withClaim("username", adminEntity.getUsername())
-                .withClaim("permission", adminEntity.getPermission())
-                .withClaim("type", "admin")
-                .withExpiresAt(new Date(System.currentTimeMillis() + EXPIRATION));
-        return builder.sign(Algorithm.HMAC256(SECRET));
+    private static JWTCreator.Builder base(String type, long id) {
+        long ttl = expiration();
+        return JWT.create().withIssuer(ISSUER).withAudience(type).withIssuedAt(new Date())
+                .withJWTId(UUID.randomUUID().toString()).withClaim("id", id).withClaim("type", type)
+                .withExpiresAt(new Date(System.currentTimeMillis() + ttl));
     }
 
-    public static String generateTokenForUser(AccountEntity accountEntity) {
-        JWTCreator.Builder builder = JWT.create();
-        builder.withClaim("id", accountEntity.getId())
-                .withClaim("account", accountEntity.getAccount())
-                .withClaim("type", "user")
-                .withExpiresAt(new Date(System.currentTimeMillis() + EXPIRATION));
-        return builder.sign(Algorithm.HMAC256(SECRET));
+    private static long expiration() {
+        try { return Math.min(Long.parseLong(System.getProperty("inquisition.jwt.ttl", "7200000")), DEFAULT_EXPIRATION); }
+        catch (Exception ignored) { return DEFAULT_EXPIRATION; }
     }
 
-    public static String generateTokenForProUser(ProUserEntity proUserEntity) {
-        JWTCreator.Builder builder = JWT.create();
-        builder.withClaim("id", proUserEntity.getId())
-                .withClaim("username", proUserEntity.getUsername())
-                .withClaim("type", "proUser")
-                .withExpiresAt(new Date(System.currentTimeMillis() + EXPIRATION));
-        return builder.sign(Algorithm.HMAC256(SECRET));
+    public static String generateTokenForAdmin(AdminEntity e) {
+        return base("admin", e.getId()).withClaim("username", e.getUsername())
+                .withClaim("permission", e.getPermission()).sign(Algorithm.HMAC256(SECRET));
+    }
+
+    public static String generateTokenForUser(AccountEntity e) {
+        return base("user", e.getId()).withClaim("account", e.getAccount())
+                .sign(Algorithm.HMAC256(SECRET));
+    }
+
+    public static String generateTokenForProUser(ProUserEntity e) {
+        return base("proUser", e.getId()).withClaim("username", e.getUsername())
+                .sign(Algorithm.HMAC256(SECRET));
     }
 
     public static boolean verifyToken(String token) {
         try {
-            if (token != null) {
-                JWT.require(Algorithm.HMAC256(SECRET)).build().verify(token);
-                return true;
-            } else {
-                return false;
+            if (SECRET == null || SECRET.isEmpty() || token == null || token.isEmpty()) return false;
+            DecodedJWT jwt = JWT.require(Algorithm.HMAC256(SECRET)).withIssuer(ISSUER)
+                    .build().verify(stripBearer(token));
+            Long revokedUntil = REVOKED.get(jwt.getId());
+            if (revokedUntil != null) {
+                if (revokedUntil > System.currentTimeMillis()) return false;
+                REVOKED.remove(jwt.getId(), revokedUntil);
             }
-        } catch (Exception e) {
-            return false;
-        }
+            return jwt.getExpiresAt() != null && jwt.getExpiresAt().after(new Date());
+        } catch (Exception e) { return false; }
     }
 
-    public static Long getId(String token) {
-        assert token != null;
-        return JWT.decode(token.substring(7)).getClaim("id").asLong();
+    public static void revokeToken(String token) {
+        try { DecodedJWT jwt = JWT.decode(stripBearer(token)); if (jwt.getId() != null)
+            REVOKED.put(jwt.getId(), jwt.getExpiresAt() == null ? Long.MAX_VALUE : jwt.getExpiresAt().getTime()); }
+        catch (Exception ignored) { }
     }
+    public static void revoke(String token) { revokeToken(token); }
+    public static void clearRevocations() { REVOKED.clear(); }
 
-    public static String getAccount(String token) {
-        assert token != null;
-        return JWT.decode(token.substring(7)).getClaim("account").asString();
+    private static String stripBearer(String token) {
+        return token != null && token.regionMatches(true, 0, "Bearer ", 0, 7) ? token.substring(7) : token;
     }
-
-    public static String getType(String token) {
-        assert token != null;
-        return JWT.decode(token).getClaim("type").asString();
-    }
+    private static DecodedJWT decode(String token) { return JWT.decode(stripBearer(token)); }
+    public static Long getId(String token) { try { return decode(token).getClaim("id").asLong(); } catch (Exception e) { return null; } }
+    public static String getAccount(String token) { try { return decode(token).getClaim("account").asString(); } catch (Exception e) { return null; } }
+    public static String getType(String token) { try { return decode(token).getClaim("type").asString(); } catch (Exception e) { return null; } }
 }
-
