@@ -29,6 +29,9 @@ public class JWTUtils {
         try { return Math.min(Long.parseLong(System.getProperty("inquisition.jwt.ttl", "7200000")), DEFAULT_EXPIRATION); }
         catch (Exception ignored) { return DEFAULT_EXPIRATION; }
     }
+    public static void configureExpirationMillis(long ttlMillis) {
+        if (ttlMillis > 0) System.setProperty("inquisition.jwt.ttl", Long.toString(ttlMillis));
+    }
 
     public static String generateTokenForAdmin(AdminEntity e) {
         return base("admin", e.getId()).withClaim("username", e.getUsername())
