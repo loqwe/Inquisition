@@ -104,6 +104,98 @@ CREATE TABLE IF NOT EXISTS goods (
     on_sale INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS task_definition (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    task_config TEXT NOT NULL,
+    schedule_type TEXT NOT NULL DEFAULT 'MANUAL',
+    schedule_expression TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS task_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_definition_id INTEGER,
+    account_id INTEGER NOT NULL,
+    device_id INTEGER,
+    run_key TEXT NOT NULL UNIQUE,
+    attempt_id TEXT NOT NULL UNIQUE,
+    lease_id TEXT,
+    status TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    config_snapshot TEXT NOT NULL,
+    lease_expires_at DATETIME,
+    started_at DATETIME,
+    finished_at DATETIME,
+    error_code TEXT,
+    error_message TEXT,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    FOREIGN KEY (task_definition_id) REFERENCES task_definition(id)
+);
+
+CREATE TABLE IF NOT EXISTS run_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_run_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    level TEXT NOT NULL,
+    phase TEXT,
+    message TEXT NOT NULL,
+    context_json TEXT,
+    occurred_at DATETIME NOT NULL,
+    UNIQUE (task_run_id, sequence_no),
+    FOREIGN KEY (task_run_id) REFERENCES task_run(id)
+);
+
+CREATE TABLE IF NOT EXISTS run_image (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_run_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    run_log_id INTEGER,
+    storage_key TEXT NOT NULL UNIQUE,
+    content_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    captured_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (task_run_id) REFERENCES task_run(id),
+    FOREIGN KEY (run_log_id) REFERENCES run_log(id)
+);
+
+CREATE TABLE IF NOT EXISTS audit_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_type TEXT NOT NULL,
+    actor_id INTEGER,
+    event_type TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT,
+    result TEXT NOT NULL,
+    summary TEXT,
+    metadata_json TEXT,
+    ip_hash TEXT,
+    created_at DATETIME NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_definition_account ON task_definition (account_id, deleted, enabled);
+CREATE INDEX IF NOT EXISTS idx_task_run_dispatch ON task_run (status, lease_expires_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_run_account_time ON task_run (account_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_run_device_time ON task_run (device_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_run_log_account_time ON run_log (account_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_run_log_run_time ON run_log (task_run_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_run_image_account_time ON run_image (account_id, captured_at);
+CREATE INDEX IF NOT EXISTS idx_run_image_run_time ON run_image (task_run_id, captured_at);
+CREATE INDEX IF NOT EXISTS idx_audit_actor_time ON audit_event (actor_type, actor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_resource_time ON audit_event (resource_type, resource_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_admin_delete ON admin (`delete`);
 CREATE INDEX IF NOT EXISTS idx_pro_user_username ON pro_user (username);
 CREATE INDEX IF NOT EXISTS idx_pro_user_authorization ON pro_user (authorization);
