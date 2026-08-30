@@ -34,6 +34,9 @@ public class CloudProtocolService {
     public Result<CloudTask> getTask(String token) {
         Device d = device(token); if (d == null) return Result.unauthorized("invalid device token");
         for (CloudTask t : tasks.values()) {
+            if ("RUNNING".equals(t.status) && t.leaseExpiresAt != null && t.leaseExpiresAt.isBefore(LocalDateTime.now())) {
+                t.status = "READY"; t.deviceId = null; t.leaseId = null;
+            }
             if ("READY".equals(t.status) && (t.deviceId == null || t.deviceId.equals(d.id))) {
                 t.deviceId = d.id; t.status = "RUNNING"; t.leaseId = UUID.randomUUID().toString();
                 t.leaseExpiresAt = LocalDateTime.now().plusMinutes(10); return Result.success(t, "assigned");
@@ -66,6 +69,7 @@ public class CloudProtocolService {
     private CloudTask authorizedTask(String token, String taskId, String attemptId, String leaseId) {
         Device d = device(token); CloudTask t = taskId == null ? null : tasks.get(taskId);
         if (d == null || t == null || !d.id.equals(t.deviceId) || !eq(attemptId, t.attemptId) || !eq(leaseId, t.leaseId)) return null;
+        if (t.leaseExpiresAt != null && t.leaseExpiresAt.isBefore(LocalDateTime.now())) return null;
         return t;
     }
     private Device device(String token) { return token == null ? null : devices.get(sha256(token)); }
