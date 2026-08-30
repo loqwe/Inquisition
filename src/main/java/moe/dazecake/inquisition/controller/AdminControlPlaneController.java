@@ -1,6 +1,8 @@
 package moe.dazecake.inquisition.controller;
 
 import moe.dazecake.inquisition.annotation.Login;
+import moe.dazecake.inquisition.annotation.UserLogin;
+import moe.dazecake.inquisition.utils.JWTUtils;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -41,6 +43,21 @@ public class AdminControlPlaneController {
         Integer total;
         if (filter.isEmpty()) total = jdbc.queryForObject("SELECT COUNT(*) FROM run_log", Integer.class);
         else total = jdbc.queryForObject("SELECT COUNT(*) FROM run_log l JOIN account a ON a.id=l.account_id" + filter, new Object[]{key, key}, Integer.class);
+        return Result.success(page(current, limit, total == null ? 0 : total, rows), "ok");
+    }
+
+    @UserLogin
+    @GetMapping("/user-logs")
+    public Result<Map<String, Object>> userLogs(@RequestHeader("Authorization") String authorization,
+                                                @RequestParam(defaultValue = "1") int current,
+                                                @RequestParam(defaultValue = "20") int size) {
+        if (jdbc == null) return Result.success(page(current, size, 0, List.of()), "ok");
+        Long accountId = JWTUtils.getId(authorization);
+        if (accountId == null) return Result.unauthorized("invalid token");
+        int offset = Math.max(0, current - 1) * Math.min(size, 100), limit = Math.min(Math.max(size, 1), 100);
+        String sql = "SELECT l.id,l.level,tr.run_key AS taskType,l.phase AS stage,l.message AS detail,NULL AS imageUrl,a.name,a.account,l.occurred_at AS time FROM run_log l JOIN task_run tr ON tr.id=l.task_run_id JOIN account a ON a.id=l.account_id WHERE l.account_id=? ORDER BY l.occurred_at DESC LIMIT ? OFFSET ?";
+        List<Map<String, Object>> rows = jdbc.queryForList(sql, accountId, limit, offset);
+        Integer total = jdbc.queryForObject("SELECT COUNT(*) FROM run_log WHERE account_id=?", Integer.class, accountId);
         return Result.success(page(current, limit, total == null ? 0 : total, rows), "ok");
     }
 
