@@ -22,7 +22,6 @@ import moe.dazecake.inquisition.model.vo.account.AccountCooldownVO;
 import moe.dazecake.inquisition.service.intf.TaskService;
 import moe.dazecake.inquisition.utils.DailyPlanUtil;
 import moe.dazecake.inquisition.utils.DeviceScopeUtil;
-import moe.dazecake.inquisition.utils.DeviceRolePolicy;
 import moe.dazecake.inquisition.utils.DynamicInfo;
 import moe.dazecake.inquisition.utils.GameDayClock;
 import moe.dazecake.inquisition.utils.Result;
@@ -235,10 +234,6 @@ public class TaskServiceImpl implements TaskService {
             taskAssignmentService.closeAssignment(existingAssignment, "INVALID", "account no longer exists", false);
         }
 
-        if (DeviceRolePolicy.isBackup(device) && hasOnlineImportantDevice(deviceToken, now)) {
-            return Result.success("重点设备在线，备用设备待命");
-        }
-
         var urgentByAccount = promoteReadyUrgentTasks(now);
         //任务上锁
         var waitingSnapshot = dispatchQueueService.snapshot();
@@ -348,15 +343,6 @@ public class TaskServiceImpl implements TaskService {
         } else {
             return Result.success("待分配队列为空");
         }
-    }
-
-    private boolean hasOnlineImportantDevice(String excludedToken, LocalDateTime now) {
-        return deviceMapper.selectList(Wrappers.<DeviceEntity>lambdaQuery()
-                        .eq(DeviceEntity::getDelete, 0))
-                .stream()
-                .filter(DeviceRolePolicy::isImportant)
-                .filter(device -> !Objects.equals(device.getDeviceToken(), excludedToken))
-                .anyMatch(device -> deviceRuntimeService.hasFreshHeartbeat(device.getDeviceToken(), now));
     }
 
     @Override

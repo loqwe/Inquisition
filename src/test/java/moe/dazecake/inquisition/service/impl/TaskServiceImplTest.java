@@ -365,7 +365,7 @@ class TaskServiceImplTest {
     }
 
     @Test
-    void backupDeviceWaitsWhileAnImportantDeviceHasAFreshHeartbeat() {
+    void backupDeviceCanCheckTheQueueWhileAnImportantDeviceHasAFreshHeartbeat() {
         var service = taskLookupService();
         var backup = new DeviceEntity().setDeviceToken("backup")
                 .setDeviceRole(DeviceRolePolicy.BACKUP).setDelete(0);
@@ -383,7 +383,42 @@ class TaskServiceImplTest {
         var result = service.getTask("backup");
 
         assertEquals(200, result.getCode());
-        assertEquals("重点设备在线，备用设备待命", result.getMsg());
+        assertEquals("待分配队列为空", result.getMsg());
+    }
+
+    @Test
+    void backupDeviceReceivesQueuedTaskWhileAnImportantDeviceIsOnline() {
+        var service = spy(taskLookupService());
+        service.messageService = mock(MessageServiceImpl.class);
+        var backup = new DeviceEntity().setDeviceToken("backup")
+                .setDeviceRole(DeviceRolePolicy.BACKUP).setDelete(0);
+        var account = new AccountEntity().setId(7L).setName("账号7")
+                .setAccount("account-7").setDelete(0).setFreeze(0)
+                .setExpireTime(LocalDateTime.of(2099, 1, 1, 0, 0))
+                .setTaskType("daily").setServer(0L);
+        var intent = DispatchIntent.scheduled(7L, 41L,
+                LocalDateTime.of(2026, 9, 4, 21, 0));
+        var assignment = new TaskAssignmentEntity().setAssignmentId("backup-assignment")
+                .setAccountId(7L).setDeviceToken("backup").setTaskType("daily")
+                .setTaskMode(TaskAssignmentService.MODE_NORMAL);
+        when(service.deviceMapper.selectOne(any())).thenReturn(backup);
+        when(service.deviceRuntimeService.hasFreshHeartbeat(eq("backup"), any(LocalDateTime.class)))
+                .thenReturn(true);
+        when(service.taskAssignmentService.findByDevice("backup")).thenReturn(Optional.empty());
+        when(service.dispatchQueueService.snapshot()).thenReturn(List.of(7L));
+        when(service.dispatchQueueService.resolve(eq(7L), any(LocalDateTime.class))).thenReturn(intent);
+        when(service.accountMapper.selectById(7L)).thenReturn(account);
+        when(service.taskAssignmentService.createAssignment(eq(account), eq("backup"), any(),
+                eq(TaskAssignmentService.MODE_NORMAL), eq(null), eq(intent))).thenReturn(assignment);
+        doReturn(false).when(service).checkActivationTime(account);
+
+        var result = service.getTask("backup");
+
+        assertEquals(200, result.getCode());
+        assertEquals("backup-assignment", result.getData().getAssignmentId());
+        verify(service.taskAssignmentService).createAssignment(eq(account), eq("backup"), any(),
+                eq(TaskAssignmentService.MODE_NORMAL), eq(null), eq(intent));
+        verify(service.dispatchQueueService).dequeue(intent);
     }
 
     @Test
