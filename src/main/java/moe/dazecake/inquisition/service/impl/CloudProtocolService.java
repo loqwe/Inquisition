@@ -38,10 +38,8 @@ public class CloudProtocolService {
     public Result<CloudTask> getTask(String token) {
         Device d = device(token); if (d == null) return Result.unauthorized("invalid device token");
         if (jdbc != null) {
-            try {
-                CloudTask persisted = claimPersistedTask(d.id);
-                if (persisted != null) return Result.success(persisted, "assigned");
-            } catch (RuntimeException ignored) { /* keep protocol available during migration */ }
+            CloudTask persisted = claimPersistedTask(d.id);
+            if (persisted != null) return Result.success(persisted, "assigned");
         }
         for (CloudTask t : tasks.values()) {
             if ("RUNNING".equals(t.status) && t.leaseExpiresAt != null && t.leaseExpiresAt.isBefore(LocalDateTime.now())) {

@@ -8,18 +8,27 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 
 @Service
 public class EndfieldCredentialService {
+    private static final byte[] INSECURE_DEFAULT_KEY = new byte[32];
     private final SecureRandom random = new SecureRandom();
     private final BCryptPasswordEncoder verifier = new BCryptPasswordEncoder();
     private final byte[] key;
 
-    public EndfieldCredentialService(@Value("${endfield.credential-key:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}") String encodedKey) {
-        byte[] decoded = encodedKey == null ? new byte[0] : Base64.getDecoder().decode(encodedKey);
-        if (decoded.length != 32) throw new IllegalStateException("endfield.credential-key must decode to 32 bytes");
+    public EndfieldCredentialService(@Value("${endfield.credential-key:}") String encodedKey) {
+        byte[] decoded;
+        try {
+            decoded = encodedKey == null ? new byte[0] : Base64.getDecoder().decode(encodedKey);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("endfield.credential-key must be valid Base64", e);
+        }
+        if (decoded.length != 32 || MessageDigest.isEqual(decoded, INSECURE_DEFAULT_KEY)) {
+            throw new IllegalStateException("endfield.credential-key must be a non-default 32-byte key");
+        }
         key = decoded;
     }
 

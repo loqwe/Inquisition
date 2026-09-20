@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EndfieldCredentialServiceTest {
-    private static final String KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    private static final String KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 
     @Test
     void encryptsWithAuthenticatedRandomIvAndBcryptVerifier() {
@@ -27,5 +27,12 @@ class EndfieldCredentialServiceTest {
         char last = encoded.charAt(encoded.length() - 1);
         String tampered = encoded.substring(0, encoded.length() - 1) + (last == 'A' ? 'B' : 'A');
         assertThrows(IllegalArgumentException.class, () -> service.decrypt(tampered));
+    }
+
+    @Test
+    void rejectsMissingAndKnownDefaultKeys() {
+        assertThrows(IllegalStateException.class, () -> new EndfieldCredentialService(""));
+        assertThrows(IllegalStateException.class, () -> new EndfieldCredentialService(
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
     }
 }
