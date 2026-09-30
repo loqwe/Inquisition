@@ -22,11 +22,14 @@ import moe.dazecake.inquisition.utils.JWTUtils;
 import moe.dazecake.inquisition.utils.Result;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
 public class UserServiceImpl implements UserService {
@@ -54,6 +57,9 @@ public class UserServiceImpl implements UserService {
 
     @Resource
     AccountServiceImpl accountService;
+
+    @Resource
+    CloudProtocolService cloudProtocolService;
 
     @Resource
     BillMapper billMapper;
@@ -153,18 +159,23 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public Result<String> updateMyAccount(Long id, AccountDTO accountDTO) {
+        if (accountDTO == null) {
+            return Result.paramError("更新内容不能为空");
+        }
         var newAccount = AccountConvert.INSTANCE.toAccountEntity(accountDTO);
-        DailyPlanUtil.normalizeDailyPlan(newAccount);
+        if (accountDTO.isConfigPresent()) {
+            DailyPlanUtil.normalizeDailyPlan(newAccount);
+        }
         var oldAccount = accountMapper.selectOne(
                 Wrappers.<AccountEntity>lambdaQuery()
                         .eq(AccountEntity::getId, id)
         );
         if (oldAccount != null) {
-
-            oldAccount.setName(newAccount.getName())
-                    .setConfig(newAccount.getConfig())
-                    .setActive(newAccount.getActive())
-                    .setNotice(newAccount.getNotice());
+            if (accountDTO.isNamePresent()) oldAccount.setName(newAccount.getName());
+            if (accountDTO.isConfigPresent()) oldAccount.setConfig(newAccount.getConfig());
+            if (accountDTO.isActivePresent()) oldAccount.setActive(newAccount.getActive());
+            if (accountDTO.isNoticePresent()) oldAccount.setNotice(newAccount.getNotice());
+            oldAccount.setUpdateTime(LocalDateTime.now());
             accountMapper.updateById(oldAccount);
 
             return Result.success("更新成功");
@@ -285,6 +296,14 @@ public class UserServiceImpl implements UserService {
             return Result.success(new UserStatusSTO("账号已被冻结，若需继续托管请先解冻"), "获取成功");
         }
 
+        String cloudTaskStatus = cloudProtocolService.activeTaskStatus(id);
+        if ("READY".equals(cloudTaskStatus)) {
+            return Result.success(new UserStatusSTO("等待云控设备领取任务"), "获取成功");
+        }
+        if ("RUNNING".equals(cloudTaskStatus)) {
+            return Result.success(new UserStatusSTO("终末地任务执行中，请勿顶号"), "获取成功");
+        }
+
         for (Long k : dynamicInfo.getFreezeUserInfoMap().keySet()) {
             if (Objects.equals(k, id)) {
                 return Result.success(new UserStatusSTO("发生冲突，账号强制冷却，稍后将自动重试作战"), "获取成功");
@@ -385,8 +404,35 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public Result<String> startNow(Long id) {
-        return Result.success(accountService.forceFightAccount(id, false));
+    @Transactional
+    public synchronized Result<String> startNow(Long id) {
+        var account = accountMapper.selectById(id);
+        if (account == null || Objects.equals(account.getDelete(), 1)) {
+            return Result.notFound("不存在的账号");
+        }
+        if (account.getExpireTime() != null && account.getExpireTime().isBefore(LocalDateTime.now())) {
+            return Result.forbidden("账号已到期或失效");
+        }
+        if (Objects.equals(account.getFreeze(), 1)) {
+            return Result.forbidden("请先解冻再执行操作");
+        }
+        if (account.getRefresh() == null || account.getRefresh() < 1) {
+            return Result.forbidden("今日刷新次数已达上限，每天零点刷新，明天再来看看吧");
+        }
+        Map<String, Object> script = account.getConfig() == null ? null : account.getConfig().getScript();
+        if (script == null || script.isEmpty()) {
+            return Result.paramError("请先保存任务配置");
+        }
+        if (cloudProtocolService.hasActiveTask(id)) {
+            return Result.success("任务已在调度队列中");
+        }
+
+        String taskId = "endfield-" + id + "-" + UUID.randomUUID().toString().replace("-", "");
+        account.setRefresh(account.getRefresh() - 1);
+        account.setUpdateTime(LocalDateTime.now());
+        accountMapper.updateById(account);
+        var task = cloudProtocolService.enqueue(taskId, id, script);
+        return Result.success(task.taskId, "任务已进入调度队列");
     }
 
     @Override
