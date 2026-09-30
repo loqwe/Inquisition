@@ -44,6 +44,10 @@ public class AccountEntity {
     @Schema(description = "名称")
     String name;//名称
 
+    @Column(name = "game_name", comment = "森空岛绑定的游戏昵称")
+    @Schema(description = "森空岛绑定的游戏昵称")
+    String gameName;//游戏昵称
+
     @Column(name = "account", comment = "账号")
     @Schema(description = "账号")
     String account;//账号

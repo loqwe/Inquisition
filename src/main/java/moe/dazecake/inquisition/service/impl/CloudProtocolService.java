@@ -35,6 +35,30 @@ public class CloudProtocolService {
         return Result.success(Map.of("deviceId", d.id, "serverTime", d.lastHeartbeat.toString()), "ok");
     }
 
+    public Result<String> reportGameName(CloudGameNameDTO req) {
+        if (req == null || blank(req.getGameName()) || req.getAccountId() == null) {
+            return Result.paramError("accountId and gameName required");
+        }
+        String gameName = req.getGameName().trim();
+        if (gameName.length() > 128) return Result.paramError("gameName too long");
+
+        CloudTask task = authorizedTask(req.getDeviceToken(), req.getTaskId(),
+                req.getAttemptId(), req.getLeaseId());
+        if (task == null || task.accountId == null || !task.accountId.equals(req.getAccountId())) {
+            return Result.unauthorized("task authorization failed");
+        }
+        if (jdbc == null) return Result.failed("database unavailable");
+
+        int changed = jdbc.update("UPDATE account SET game_name=?,update_time=CURRENT_TIMESTAMP WHERE id=? AND `delete`=0",
+                gameName, task.accountId);
+        if (changed == 0) {
+            Integer existing = jdbc.queryForObject("SELECT COUNT(*) FROM account WHERE id=? AND `delete`=0",
+                    Integer.class, task.accountId);
+            if (existing == null || existing == 0) return Result.notFound("account not found");
+        }
+        return Result.success("game name updated");
+    }
+
     public Result<CloudTask> getTask(String token) {
         Device d = device(token); if (d == null) return Result.unauthorized("invalid device token");
         if (jdbc != null) {

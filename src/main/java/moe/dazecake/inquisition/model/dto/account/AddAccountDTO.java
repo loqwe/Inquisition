@@ -12,6 +12,8 @@ public class AddAccountDTO {
 
     private String name;
 
+    private String gameName;
+
     private String account;
 
     private String password;

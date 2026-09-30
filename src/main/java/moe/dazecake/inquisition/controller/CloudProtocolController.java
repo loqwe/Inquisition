@@ -23,6 +23,13 @@ public class CloudProtocolController {
         return service.heartbeat(req);
     }
 
+    @PostMapping("/reportGameName")
+    public Result<String> reportGameName(@RequestBody CloudGameNameDTO req,
+                                         @RequestHeader(value = "X-Device-Token", required = false) String token) {
+        withToken(req, token);
+        return service.reportGameName(req);
+    }
+
     @GetMapping("/getTask")
     public Result<CloudProtocolService.CloudTask> getTask(
             @RequestParam(required = false) String deviceToken,
@@ -50,6 +57,10 @@ public class CloudProtocolController {
         }
         if (req instanceof CloudLogDTO) {
             CloudLogDTO dto = (CloudLogDTO) req;
+            if (dto.getDeviceToken() == null || dto.getDeviceToken().isBlank()) dto.setDeviceToken(token);
+        }
+        if (req instanceof CloudGameNameDTO) {
+            CloudGameNameDTO dto = (CloudGameNameDTO) req;
             if (dto.getDeviceToken() == null || dto.getDeviceToken().isBlank()) dto.setDeviceToken(token);
         }
     }

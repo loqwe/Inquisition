@@ -49,6 +49,7 @@ public class AccountServiceImpl implements AccountService {
     public void addAccount(AddAccountDTO addAccountDTO) {
         var accountEntity = new AccountEntity();
         accountEntity.setName(addAccountDTO.getName())
+                .setGameName(addAccountDTO.getGameName())
                 .setAccount(addAccountDTO.getAccount())
                 .setPasswordVerifier(credentialService.hash(addAccountDTO.getPassword()))
                 .setPasswordCiphertext(credentialService.encrypt(addAccountDTO.getPassword()))
@@ -142,6 +143,9 @@ public class AccountServiceImpl implements AccountService {
         }
         if (presentFields.contains("name")) {
             account.setName(accountDTO.getName());
+        }
+        if (presentFields.contains("gameName")) {
+            account.setGameName(accountDTO.getGameName());
         }
         if (presentFields.contains("account")) {
             account.setAccount(accountDTO.getAccount());

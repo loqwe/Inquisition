@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS pro_user (
 CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
+    game_name TEXT,
     account TEXT,
     password TEXT,
     password_ciphertext TEXT,
