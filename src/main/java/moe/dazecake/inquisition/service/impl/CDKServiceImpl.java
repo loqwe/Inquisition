@@ -62,9 +62,26 @@ public class CDKServiceImpl implements CDKService {
         }
 
         var taskType = TaskType.getByStr(cdkEntity.getType());
+        String msg = "激活成功";
         switch (taskType) {
             case DAILY:
-                accountService.addAccountExpireTime(id, 24 * Integer.parseInt(cdkEntity.getParam().split("\\|")[0]));
+                int days = 30;
+                try {
+                    days = Integer.parseInt(cdkEntity.getParam().split("\\|")[0].trim());
+                } catch (Exception ignored) {}
+                accountService.addAccountExpireTime(id, 24 * days);
+                msg = "成功充入 " + days + " 天授权时长";
+                break;
+            case REFRESH:
+                int runs = 1;
+                try {
+                    runs = Integer.parseInt(cdkEntity.getParam().split("\\|")[0].trim());
+                } catch (Exception ignored) {}
+                int currentRefresh = accountEntity.getRefresh() == null ? 0 : accountEntity.getRefresh();
+                accountEntity.setRefresh(currentRefresh + runs);
+                accountEntity.setUpdateTime(LocalDateTime.now());
+                accountMapper.updateById(accountEntity);
+                msg = "成功充入 " + runs + " 次立刻作战次数";
                 break;
             case ROGUE:
             case ROGUE2:
@@ -85,7 +102,7 @@ public class CDKServiceImpl implements CDKService {
 
         dynamicInfo.setUserSan(accountEntity.getId(), 135, 135);
 
-        return Result.success("激活成功");
+        return Result.success(msg);
     }
 
     @Override
@@ -101,8 +118,16 @@ public class CDKServiceImpl implements CDKService {
             return Result.notFound("激活码不存在或已使用");
         }
 
-        if ("daily".equals(cdkEntity.getType())) {
-            accountEntity.setExpireTime(LocalDateTime.now().plusDays(24L * Integer.parseInt(cdkEntity.getParam().split("\\|")[0])));
+        if ("refresh".equalsIgnoreCase(cdkEntity.getType())) {
+            return Result.paramError("创建账号需使用授权天数卡密，作战次数卡密请登录后在个人中心兑换");
+        }
+
+        if ("daily".equalsIgnoreCase(cdkEntity.getType())) {
+            long days = 30;
+            try {
+                days = Long.parseLong(cdkEntity.getParam().split("\\|")[0].trim());
+            } catch (Exception ignored) {}
+            accountEntity.setExpireTime(LocalDateTime.now().plusDays(days));
         } else {
             accountEntity.setExpireTime(LocalDateTime.now());
         }
